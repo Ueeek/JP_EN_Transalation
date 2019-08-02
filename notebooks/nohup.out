@@ -1,0 +1,9 @@
+[I 13:52:06.456 NotebookApp] The port 8888 is already in use, trying another port.
+[I 13:52:06.497 NotebookApp] JupyterLab extension loaded from /opt/anaconda3/lib/python3.7/site-packages/jupyterlab
+[I 13:52:06.497 NotebookApp] JupyterLab application directory is /opt/anaconda3/share/jupyter/lab
+[I 13:52:06.499 NotebookApp] Serving notebooks from local directory: /home/ueki.k/jp_en_translation/notebooks
+[I 13:52:06.499 NotebookApp] The Jupyter Notebook is running at:
+[I 13:52:06.499 NotebookApp] http://(nike or 127.0.0.1):8889/
+[I 13:52:06.499 NotebookApp] Use Control-C to stop this server and shut down all kernels (twice to skip confirmation).
+[I 14:03:24.277 NotebookApp] Interrupted...
+[I 14:03:24.278 NotebookApp] Shutting down 0 kernels
