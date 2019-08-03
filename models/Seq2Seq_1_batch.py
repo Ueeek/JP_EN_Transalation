@@ -6,7 +6,7 @@ from torch import optim
 from utils.plot_hist import showPlot
 from torch.utils.data import DataLoader
 
-device = torch.device("cude" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class EncoderRnn(nn.Module):
@@ -31,7 +31,7 @@ class EncoderRnn(nn.Module):
         return output, hidden
 
     def initHidden(self, batch_size):
-        return torch.zeros(1, batch_size, self.hidden_size, device=device)
+        return torch.zeros(1, batch_size, self.hidden_size).to(device)
 
 
 class DecoderRnn(nn.Module):
@@ -57,7 +57,7 @@ class DecoderRnn(nn.Module):
         return output, hidden
 
     def initHidden(self, batch_size):
-        return torch.zeros(1, batch_size, self.hidden_size, device=device)
+        return torch.zeros(1, batch_size, self.hidden_size).to(device)
 
 
 class Seq2Seq:
@@ -70,9 +70,9 @@ class Seq2Seq:
         self.SOS_token = config["SOS_token"]
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
-        self.encoder = EncoderRnn(config)
-        self.decoder = DecoderRnn(config)
-        self.criterion = nn.NLLLoss()
+        self.encoder = EncoderRnn(config).to(device)
+        self.decoder = DecoderRnn(config).to(device)
+        self.criterion = nn.NLLLoss().to(device)
         self. encoder_optimizer = optim.SGD(
             self.encoder.parameters(), lr=self.learning_rate)
         self.decoder_opimizer = optim.SGD(
@@ -98,7 +98,7 @@ class Seq2Seq:
 
         # encoder
         encoder_outputs = torch.zeros(
-            self.MAX_LENGTH, batch_size, self.n_hidden, device=device)
+            self.MAX_LENGTH, batch_size, self.n_hidden).to(device)
         loss = 0
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(
@@ -107,7 +107,7 @@ class Seq2Seq:
 
         # decoder
         decoder_input = torch.LongTensor(
-            [self.SOS_token]*batch_size, device=device)
+            [self.SOS_token]*batch_size)
         decoder_hidden = encoder_hidden
         for di in range(target_length):
             decoder_output, decoder_hidden = self.decoder(
@@ -140,6 +140,8 @@ class Seq2Seq:
             start = time.time()
             print_loss_total = 0
             for batch_x, batch_y in train_loader:
+                batch_x = batch_x.to(device)
+                batch_y = batch_y.to(device)
                 loss = self.train(batch_x, batch_y)
                 print_loss_total += loss
                 plot_loss_total += loss
@@ -157,20 +159,19 @@ class Seq2Seq:
         showPlot(plot_losses)
 
     def translate(self, input):
-        ids = torch.tensor(input, dtype=torch.long,
-                           device=device).view(-1, 1)
+        ids = torch.tensor(input, dtype=torch.long).view(-1, 1).to(device)
         with torch.no_grad():
             input_length = ids.size()[0]
             encoder_hidden = self.encoder.initHidden(1)
             encoder_outputs = torch.zeros(
-                self.MAX_LENGTH, 1, self.n_hidden, device=device)
+                self.MAX_LENGTH, 1, self.n_hidden).to(device)
 
             for ei in range(input_length):
                 encoder_output, encoder_hidden = self.encoder(
                     ids[ei], 1, encoder_hidden)
                 encoder_outputs[ei] += encoder_output[0]
 
-            decoder_input = torch.tensor([[self.SOS_token]], device=device)
+            decoder_input = torch.tensor([[self.SOS_token]]).to(device)
 
             decoder_hidden = encoder_hidden
 
