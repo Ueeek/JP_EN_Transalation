@@ -22,7 +22,9 @@ class EncoderRnn(nn.Module):
         if emb is None:
             self.embedding = nn.Embedding(self.input_size, self.hidden_size)
         else:
-            assert emb.size == (self.input_size, self.hidden_size)
+            print("emb_enc", emb.size())
+            print("int->", self.input_size)
+            print("hid->", self.hidden_size)
             self.embedding = nn.Embedding.from_pretrained(emb)
         self.gru = nn.GRU(
             self.hidden_size, self.hidden_size, num_layers=2, bidirectional=True)
@@ -53,7 +55,9 @@ class DecoderRnn(nn.Module):
         if emb is None:
             self.embedding = nn.Embedding(self.output_size, self.hidden_size)
         else:
-            assert emb.size == (self.output_size, self.hidden_size)
+            print("emb_dec", emb.size())
+            print("int->", self.output_size)
+            print("hid->", self.hidden_size)
             self.embedding = nn.Embedding.from_pretrained(emb)
         self.gru = nn.GRU(self.hidden_size, self.hidden_size,
                           num_layers=2, bidirectional=True)
@@ -85,7 +89,9 @@ class Seq2Seq:
         self.translate_length = config["translate_length"]
 
         enc_emb = torch.FloatTensor(enc_emb).to(device)
-        dec_emb = torch.FloatTensor(enc_emb).to(device)
+        dec_emb = torch.FloatTensor(dec_emb).to(device)
+        print("enc_emb_seq", enc_emb.size())
+        print("dec_emb_size", dec_emb.size())
         self.encoder = EncoderRnn(config, enc_emb).to(device)
         self.decoder = DecoderRnn(config, dec_emb).to(device)
         self.criterion = nn.NLLLoss().to(device)

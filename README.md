@@ -6,7 +6,8 @@
 1. 1_layer_lstm encoder +decoder
   * keras
   * pytorch
-       1. batchなし
-       2. batchありversion
-  
-  
+        1. batchなし
+        2. batchありversion
+        3. GRU　多層化　 & bidirectional
+        4. pretrained embeddingを使う
+     
