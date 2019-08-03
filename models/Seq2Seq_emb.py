@@ -14,12 +14,16 @@ class EncoderRnn(nn.Module):
     encoder
     """
 
-    def __init__(self, config):
+    def __init__(self, config, emb):
         super(EncoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.input_size = config["input_dim"]
 
-        self.embedding = nn.Embedding(self.input_size, self.hidden_size)
+        if emb is None:
+            self.embedding = nn.Embedding(self.input_size, self.hidden_size)
+        else:
+            assert emb.size == (self.input_size, self.hidden_size)
+            self.embedding = nn.Embedding.from_pretrained(emb)
         self.gru = nn.GRU(
             self.hidden_size, self.hidden_size, num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
@@ -41,12 +45,16 @@ class DecoderRnn(nn.Module):
     decoder
     """
 
-    def __init__(self, config):
+    def __init__(self, config, emb):
         super(DecoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.output_size = config["output_dim"]
 
-        self.embedding = nn.Embedding(self.output_size, self.hidden_size)
+        if emb is None:
+            self.embedding = nn.Embedding(self.output_size, self.hidden_size)
+        else:
+            assert emb.size == (self.output_size, self.hidden_size)
+            self.embedding = nn.Embedding.from_pretrained(emb)
         self.gru = nn.GRU(self.hidden_size, self.hidden_size,
                           num_layers=2, bidirectional=True)
         self.out = nn.Linear(self.hidden_size, self.output_size)
@@ -66,7 +74,7 @@ class DecoderRnn(nn.Module):
 
 
 class Seq2Seq:
-    def __init__(self, config):
+    def __init__(self, config, enc_emb=None, dec_emb=None):
         self.print_every = 10
         self.plot_epoch = 10
         self.learning_rate = config["learning_rate"]
@@ -75,8 +83,11 @@ class Seq2Seq:
         self.SOS_token = config["SOS_token"]
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
-        self.encoder = EncoderRnn(config).to(device)
-        self.decoder = DecoderRnn(config).to(device)
+
+        enc_emb = torch.FloatTensor(enc_emb).to(device)
+        dec_emb = torch.FloatTensor(enc_emb).to(device)
+        self.encoder = EncoderRnn(config, enc_emb).to(device)
+        self.decoder = DecoderRnn(config, dec_emb).to(device)
         self.criterion = nn.NLLLoss().to(device)
         self. encoder_optimizer = optim.SGD(
             self.encoder.parameters(), lr=self.learning_rate)
