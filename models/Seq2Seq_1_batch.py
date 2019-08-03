@@ -4,8 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 from utils.plot_hist import showPlot
+from torch.utils.data import DataLoader
 
-device = torch.device("cude" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class EncoderRnn(nn.Module):
@@ -22,14 +23,15 @@ class EncoderRnn(nn.Module):
         self.lstm = nn.GRU(
             self.hidden_size, self.hidden_size)
 
-    def forward(self, input, hidden):
-        embedded = self.embedding(input).view(1, 1, -1)
+    def forward(self, input, batch_size, hidden):
+        embedded = self.embedding(input).view(
+            1, batch_size, self.hidden_size)
         output = embedded
         output, hidden = self.lstm(output, hidden)
         return output, hidden
 
-    def initHidden(self):
-        return torch.zeros(1, 1, self.hidden_size, device=device)
+    def initHidden(self, batch_size):
+        return torch.zeros(1, batch_size, self.hidden_size).to(device)
 
 
 class DecoderRnn(nn.Module):
@@ -47,61 +49,73 @@ class DecoderRnn(nn.Module):
         self.out = nn.Linear(self.hidden_size, self.output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
-    def forward(self, input, hidden):
-        output = self.embedding(input).view(1, 1, -1)
+    def forward(self, input, batch_size, hidden):
+        output = self.embedding(input).view(1, batch_size, -1)
         output = F.relu(output)
         output, hidden = self.lstm(output, hidden)
         output = self.softmax(self.out(output[0]))
         return output, hidden
 
-    def initHidden(self):
-        return torch.zeros(1, 1, self.hidden_size, device=device)
+    def initHidden(self, batch_size):
+        return torch.zeros(1, batch_size, self.hidden_size).to(device)
 
 
 class Seq2Seq:
     def __init__(self, config):
-        self.print_every = 10
-        self.plot_every = 100
+        self.print_every = 1
+        self.plot_epoch = 1
         self.learning_rate = config["learning_rate"]
         self.MAX_LENGTH = config["MAX_LENGTH"]
         self.EOS_token = config["EOS_token"]
         self.SOS_token = config["SOS_token"]
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
-        self.encoder = EncoderRnn(config)
-        self.decoder = DecoderRnn(config)
-        self.criterion = nn.NLLLoss()
+        self.encoder = EncoderRnn(config).to(device)
+        self.decoder = DecoderRnn(config).to(device)
+        self.criterion = nn.NLLLoss().to(device)
         self. encoder_optimizer = optim.SGD(
             self.encoder.parameters(), lr=self.learning_rate)
         self.decoder_opimizer = optim.SGD(
             self.decoder.parameters(), lr=self.learning_rate)
+        self.batch_size = config["batch_size"]
+        self.epochs = config["epochs"]
 
     def train(self, input_tensor, target_tensor):
 
-        encoder_hidden = self.encoder.initHidden()
+        batch_size = input_tensor.size()[0]
+        # print("batch_size->", input_tensor.size())
+
+        encoder_hidden = self.encoder.initHidden(batch_size)
 
         self.encoder_optimizer.zero_grad()
         self.decoder_opimizer.zero_grad()
+        input_tensor = input_tensor.transpose(0, 1)
+        target_tensor = target_tensor.transpose(0, 1)
 
-        input_length = input_tensor.size(0)
-        target_length = target_tensor.size(0)
+        input_length = input_tensor.size()[0]
+        # print(input_tensor.size())
+        target_length = target_tensor.size()[0]
 
         # encoder
         encoder_outputs = torch.zeros(
-            self.MAX_LENGTH, self.n_hidden, device=device)
+            self.MAX_LENGTH, batch_size, self.n_hidden).to(device)
         loss = 0
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(
-                input_tensor[ei], encoder_hidden)
-            encoder_outputs[ei] = encoder_output[0, 0]
+                input_tensor[ei], batch_size, encoder_hidden)
+            encoder_outputs[ei] = encoder_output[0]
 
         # decoder
-        decoder_input = torch.tensor([[self.SOS_token]], device=device)
-        decoder_hidden = encoder_hidden
+        decoder_input = torch.LongTensor(
+            [self.SOS_token]*batch_size).to(device)
+        decoder_hidden = encoder_hidden.to(device)
         for di in range(target_length):
             decoder_output, decoder_hidden = self.decoder(
-                decoder_input, decoder_hidden)
+                decoder_input, batch_size, decoder_hidden)
+
+            topv, topi = decoder_output.data.topk(1)
             loss += self.criterion(decoder_output, target_tensor[di])
+            # print("loss->", type(loss))
             decoder_input = target_tensor[di]
 
         # back propagate
@@ -110,59 +124,61 @@ class Seq2Seq:
         self.decoder_opimizer.step()
         return loss.item() / target_length
 
-    def trainIters(self, input, target, n_iters):
-        src = [torch.tensor(v, dtype=torch.long,
-                            device=device).view(-1, 1) for v in input]
-        trg = [torch.tensor(v, dtype=torch.long,
-                            device=device).view(-1, 1) for v in target]
+    def trainIters(self, src, trg):
+
+        data = [(torch.LongTensor(s), torch.LongTensor(t))
+                for s, t in zip(src, trg)]
+        train_loader = DataLoader(
+            data, batch_size=self.batch_size, shuffle=True)
+
+        # batchを作る
         plot_losses = []
-        print_loss_total = 0
         plot_loss_total = 0
 
-        encoder_optimizer = optim.SGD(
-            self.encoder.parameters(), lr=self.learning_rate)
-        decoder_opimizer = optim.SGD(
-            self.decoder.parameters(), lr=self.learning_rate)
+        for epoch in range(self.epochs):
+            print("epoch{} start".format(epoch+1))
+            start = time.time()
+            print_loss_total = 0
+            for batch_x, batch_y in train_loader:
+                batch_x = batch_x.to(device)
+                batch_y = batch_y.to(device)
+                loss = self.train(batch_x, batch_y)
+                print_loss_total += loss
+                plot_loss_total += loss
 
-        for iter in range(1, n_iters+1):
-            input_tensor = src[iter-1]
-            target_tensor = trg[iter-1]
-            loss = self.train(input_tensor, target_tensor)
-            print_loss_total += loss
-            plot_loss_total += loss
-
-            if iter % self.print_every == 0:
+            if epoch % self.print_every == 0:
                 print_loss_avg = print_loss_total/self.print_every
                 print_loss_total = 0
-                print("loss_av->", print_loss_avg)
+                print("loss_av in eopch{}=> {}".format(epoch, print_loss_avg))
+                print("time->", time.time() - start)
 
-            if iter % self.plot_every == 0:
-                plot_loss_avg = plot_loss_total/self.plot_every
+            if epoch % self.plot_epoch == 0:
+                plot_loss_avg = plot_loss_total/self.plot_epoch
                 plot_losses.append(plot_loss_avg)
                 plot_loss_total = 0
         showPlot(plot_losses)
 
     def translate(self, input):
-        ids = torch.tensor(input, dtype=torch.long, device=device).view(-1, 1)
+        ids = torch.tensor(input, dtype=torch.long).view(-1, 1).to(device)
         with torch.no_grad():
             input_length = ids.size()[0]
             encoder_hidden = self.encoder.initHidden(1)
             encoder_outputs = torch.zeros(
-                self.MAX_LENGTH, self.n_hidden, device=device)
+                self.MAX_LENGTH, 1, self.n_hidden).to(device)
 
             for ei in range(input_length):
                 encoder_output, encoder_hidden = self.encoder(
-                    ids[ei], encoder_hidden)
-                encoder_outputs[ei] += encoder_output[0, 0]
+                    ids[ei], 1, encoder_hidden)
+                encoder_outputs[ei] += encoder_output[0]
 
-            decoder_input = torch.tensor([[self.SOS_token]], device=device)
+            decoder_input = torch.tensor([[self.SOS_token]]).to(device)
 
             decoder_hidden = encoder_hidden
 
             decoded_ids = []
             for di in range(self.translate_length):
                 decoder_output, decoder_hidden = self.decoder(
-                    decoder_input, decoder_hidden)
+                    decoder_input, 1, decoder_hidden)
                 topv, topi = decoder_output.topk(1)
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
