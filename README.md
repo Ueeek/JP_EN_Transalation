@@ -6,7 +6,7 @@
 1. 1_layer_lstm encoder +decoder
   * keras
   * pytorch
-   * batchなし
-   * batchありversion
+       1. batchなし
+       2. batchありversion
   
   
