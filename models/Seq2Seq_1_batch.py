@@ -107,8 +107,8 @@ class Seq2Seq:
 
         # decoder
         decoder_input = torch.LongTensor(
-            [self.SOS_token]*batch_size)
-        decoder_hidden = encoder_hidden
+            [self.SOS_token]*batch_size).to(device)
+        decoder_hidden = encoder_hidden.to(device)
         for di in range(target_length):
             decoder_output, decoder_hidden = self.decoder(
                 decoder_input, batch_size, decoder_hidden)
