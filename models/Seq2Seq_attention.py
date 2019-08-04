@@ -114,8 +114,8 @@ class AttentionDecoderRnn(nn.Module):
         # gru_out_linear=(1,batch,hidden) <- (1,batch,hidden*2)
         gru_out_linear = self.linear(gru_out)
         # attn=(batch,hidden)
-        #attn = self.attention_layer(encoder_outputs, gru_out_linear)
-        attn = gru_out_linear[0]
+        attn = self.attention_layer(encoder_outputs, gru_out_linear)
+        #attn = gru_out_linear[0]
         # output->(batch,output_size)
         output = self.out(attn)
         output = self.softmax(output)
