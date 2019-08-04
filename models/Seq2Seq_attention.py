@@ -244,11 +244,11 @@ class Seq2Seq:
             decoder_hidden = encoder_hidden
 
             decoded_ids = []
-            decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
+            #decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
             for di in range(self.translate_length):
                 decoder_output, decoder_hidden, decoder_attention = self.decoder(
                     decoder_input, 1, decoder_hidden, encoder_outputs)
-                decoder_attentions[di] = decoder_attention.data
+                #decoder_attentions[di] = decoder_attention.data
                 topv, topi = decoder_output.topk(1)
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
