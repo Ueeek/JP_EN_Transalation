@@ -96,6 +96,7 @@ class AttentionDecoderRnn(nn.Module):
                           num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
+        self.softmax = nn.LogSoftmax(dim=1)
 
     def forward(self, input, batch_size, hidden, encoder_outputs):
         # input->(batch_size) 前のdecoderの結果的な(teacher forcingのtargrt)
@@ -113,11 +114,11 @@ class AttentionDecoderRnn(nn.Module):
         # gru_out_linear=(1,batch,hidden) <- (1,batch,hidden*2)
         gru_out_linear = self.linear(gru_out)
         # attn=(batch,hidden)
-        attn = self.attention_layer(encoder_outputs, gru_out_linear)
+        #attn = self.attention_layer(encoder_outputs, gru_out_linear)
+        attn = gru_out_linear[0]
         # output->(batch,output_size)
         output = self.out(attn)
-        output = F.softmax(output, dim=1)
-
+        output = self.softmax(output)
         return output, hidden_out, attn
 
     def initHidden(self, batch_size):
