@@ -20,8 +20,7 @@ class EncoderRnn(nn.Module):
         self.input_size = config["input_dim"]
 
         if emb is None:
-            self.embedding = nn.Embedding(
-                self.input_size, self.hidden_size, padding_idx=0)
+            self.embedding = nn.Embedding(self.input_size, self.hidden_size)
         else:
             print("emb_enc", emb.size())
             print("int->", self.input_size)
@@ -43,40 +42,87 @@ class EncoderRnn(nn.Module):
         return torch.zeros(4, batch_size, self.hidden_size).to(device)
 
 
-class DecoderRnn(nn.Module):
+class Attention(nn.Module):
     """
-    decoder
+    calc Attention
+    """
+
+    def __init__(self, config):
+        super(Attention, self).__init__()
+
+    def forward(self, encoder_outputs, decoder_gru_out):
+        # encoder_outputs=(input_len,batch,hidden)
+        # decoder_gru_out=(1,batch,hidden)
+        inp_len, batch_len, hidden_len = encoder_outputs.size()
+
+        # rep_gru_out = (input_len,batch,hidden)
+        rep_gru_out = decoder_gru_out.repeat(inp_len, 1, 1)
+        # weight_prod = (input_len,batch,hidden)
+        weight_prod = rep_gru_out*encoder_outputs
+        # weight_sum = (inp_len,batch)
+        weight_sum = weight_prod.sum(dim=2)
+        # weight_softmax = (inp_len,batch,1)
+        weight_softmax = F.softmax(weight_sum, dim=0).view(
+            inp_len, batch_len, 1).to(device)
+
+        # soft_rep = (inp_len,bacth,hidden)
+        soft_rep = weight_softmax.repeat(1, 1, hidden_len)
+        # attn_mul = (inp_len,batch_len,hidden)
+        attn_mul = soft_rep*encoder_outputs
+        # attnsum = (batch,hidden)
+        attn_sum = attn_mul.sum(dim=0)
+
+        return attn_sum
+
+
+class AttentionDecoderRnn(nn.Module):
+    """
+    decoder RNN with attention
     """
 
     def __init__(self, config, emb):
-        super(DecoderRnn, self).__init__()
+        super(AttentionDecoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.output_size = config["output_dim"]
+        self.max_length = config["MAX_LENGTH"]
+        self.attention_layer = Attention(config)
 
         if emb is None:
-            self.embedding = nn.Embedding(
-                self.output_size, self.hidden_size, padding_idx=0)
+            self.embedding = nn.Embedding(self.output_size, self.hidden_size)
         else:
-            print("emb_dec", emb.size())
-            print("int->", self.output_size)
-            print("hid->", self.hidden_size)
             self.embedding = nn.Embedding.from_pretrained(emb)
+
         self.gru = nn.GRU(self.hidden_size, self.hidden_size,
                           num_layers=2, bidirectional=True)
-        self.out = nn.Linear(self.hidden_size, self.output_size)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
+        self.out = nn.Linear(self.hidden_size, self.output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
-    def forward(self, input, batch_size, hidden):
-        output = self.embedding(input).view(1, batch_size, -1)
-        output = F.relu(output)
-        output, hidden = self.gru(output, hidden)
-        output = self.linear(output)
-        output = self.softmax(self.out(output[0]))
-        return output, hidden
+    def forward(self, input, batch_size, hidden, encoder_outputs):
+        # input->(batch_size) 前のdecoderの結果的な(teacher forcingのtargrt)
+        # hidden -> (4,batch_size,hidden_size)
+        # encoder_outputs -> (inp_len,batch,hidden)
+
+        # embedded = (1,batch,hidden)
+        embedded = self.embedding(input).view(
+            1, batch_size, self.hidden_size).to(device)
+        # gru_in = (1,batch,hidden)
+        gru_in = F.relu(embedded)
+        # gru_out = (1,batch.hidden*2)
+        # hidden_out = (4,batch,hidden)
+        gru_out, hidden_out = self.gru(gru_in, hidden)
+        # gru_out_linear=(1,batch,hidden) <- (1,batch,hidden*2)
+        gru_out_linear = self.linear(gru_out)
+        # attn=(batch,hidden)
+        #attn = self.attention_layer(encoder_outputs, gru_out_linear)
+        attn = gru_out_linear[0]
+        # output->(batch,output_size)
+        output = self.out(attn)
+        output = self.softmax(output)
+        return output, hidden_out, attn
 
     def initHidden(self, batch_size):
-        return torch.zeros(4, batch_size, self.hidden_size).to(device)
+        return torch(4, batch_size, self.hidden_size).to(device)
 
 
 class Seq2Seq:
@@ -90,13 +136,13 @@ class Seq2Seq:
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
 
-        enc_emb = torch.FloatTensor(enc_emb).to(device)
-        dec_emb = torch.FloatTensor(dec_emb).to(device)
-        print("enc_emb_seq", enc_emb.size())
-        print("dec_emb_size", dec_emb.size())
+        enc_emb = torch.FloatTensor(enc_emb).to(
+            device) if not enc_emb is None else None
+        dec_emb = torch.FloatTensor(dec_emb).to(
+            device) if not dec_emb is None else None
         self.encoder = EncoderRnn(config, enc_emb).to(device)
-        self.decoder = DecoderRnn(config, dec_emb).to(device)
-        self.criterion = nn.NLLLoss(ignnore_index=0).to(device)
+        self.decoder = AttentionDecoderRnn(config, dec_emb).to(device)
+        self.criterion = nn.NLLLoss().to(device)
         self. encoder_optimizer = optim.SGD(
             self.encoder.parameters(), lr=self.learning_rate)
         self.decoder_opimizer = optim.SGD(
@@ -134,12 +180,10 @@ class Seq2Seq:
             [self.SOS_token]*batch_size).to(device)
         decoder_hidden = encoder_hidden.to(device)
         for di in range(target_length):
-            decoder_output, decoder_hidden = self.decoder(
-                decoder_input, batch_size, decoder_hidden)
+            decoder_output, decoder_hidden, _ = self.decoder(
+                decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
-            topv, topi = decoder_output.data.topk(1)
             loss += self.criterion(decoder_output, target_tensor[di])
-            # print("loss->", type(loss))
             decoder_input = target_tensor[di]
 
         # back propagate
@@ -200,9 +244,11 @@ class Seq2Seq:
             decoder_hidden = encoder_hidden
 
             decoded_ids = []
+            decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
             for di in range(self.translate_length):
-                decoder_output, decoder_hidden = self.decoder(
-                    decoder_input, 1, decoder_hidden)
+                decoder_output, decoder_hidden, decoder_attention = self.decoder(
+                    decoder_input, 1, decoder_hidden, encoder_outputs)
+                decoder_attentions[di] = decoder_attention.data
                 topv, topi = decoder_output.topk(1)
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
@@ -210,4 +256,4 @@ class Seq2Seq:
                 else:
                     decoded_ids.append(topi.item())
                 decoder_input = topi.squeeze().detach()
-            return decoded_ids
+            return decoded_ids, decoder_attentions[:di+1]
