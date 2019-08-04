@@ -18,7 +18,7 @@ class LangEn:
         self.word2count = {}
         self.index2word = {self.SOS_token: "SOS",
                            self.EOS_token: "EOS", self.UNK_token: "UNK"}
-        self.n_words = 3
+        self.n_words = 4
         self.tokenizer = mos.MosesTokenizer("en")
 
     def addSentence(self, sentence):
