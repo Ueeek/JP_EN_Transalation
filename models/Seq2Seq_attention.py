@@ -256,4 +256,4 @@ class Seq2Seq:
                 else:
                     decoded_ids.append(topi.item())
                 decoder_input = topi.squeeze().detach()
-            return decoded_ids, decoder_attentions[:di+1]
+            return decoded_ids
