@@ -3,7 +3,7 @@ import time
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
-from utils.plot_hist import showPlot
+from utils.plot_hist import showPlot, show_loss_plot
 from torch.utils.data import DataLoader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,9 +22,6 @@ class EncoderRnn(nn.Module):
         if emb is None:
             self.embedding = nn.Embedding(self.input_size, self.hidden_size)
         else:
-            print("emb_enc", emb.size())
-            print("int->", self.input_size)
-            print("hid->", self.hidden_size)
             self.embedding = nn.Embedding.from_pretrained(emb)
         self.gru = nn.GRU(
             self.hidden_size, self.hidden_size, num_layers=2, bidirectional=True)
@@ -115,7 +112,7 @@ class AttentionDecoderRnn(nn.Module):
         gru_out_linear = self.linear(gru_out)
         # attn=(batch,hidden)
         attn = self.attention_layer(encoder_outputs, gru_out_linear)
-        #attn = gru_out_linear[0]
+        # attn = gru_out_linear[0]
         # output->(batch,output_size)
         output = self.out(attn)
         output = self.softmax(output)
@@ -135,6 +132,7 @@ class Seq2Seq:
         self.SOS_token = config["SOS_token"]
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
+        self.val_size = config["val_size"]
 
         enc_emb = torch.FloatTensor(enc_emb).to(
             device) if not enc_emb is None else None
@@ -183,8 +181,9 @@ class Seq2Seq:
             decoder_output, decoder_hidden, _ = self.decoder(
                 decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
-            loss += self.criterion(decoder_output, target_tensor[di])
+            tmp_loss = self.criterion(decoder_output, target_tensor[di])
             decoder_input = target_tensor[di]
+            loss += tmp_loss
 
         # back propagate
         loss.backward()
@@ -192,39 +191,90 @@ class Seq2Seq:
         self.decoder_opimizer.step()
         return loss.item() / target_length
 
-    def trainIters(self, src, trg):
+    def validation(self, input_tensor, target_tensor):
+        with torch.no_grad():
+            batch_size = input_tensor.size()[0]
+            encoder_hidden = self.encoder.initHidden(batch_size)
 
-        data = [(torch.LongTensor(s), torch.LongTensor(t))
-                for s, t in zip(src, trg)]
+            self.encoder_optimizer.zero_grad()
+            self.decoder_opimizer.zero_grad()
+            input_tensor = input_tensor.transpose(0, 1)
+            target_tensor = target_tensor.transpose(0, 1)
+
+            input_length = input_tensor.size()[0]
+            target_length = target_tensor.size()[0]
+
+            # encoder
+            encoder_outputs = torch.zeros(
+                self.MAX_LENGTH, batch_size, self.n_hidden).to(device)
+            loss = 0
+            for ei in range(input_length):
+                encoder_output, encoder_hidden = self.encoder(
+                    input_tensor[ei], batch_size, encoder_hidden)
+                encoder_outputs[ei] = encoder_output[0]
+
+            # decoder
+            decoder_input = torch.LongTensor(
+                [self.SOS_token]*batch_size).to(device)
+            decoder_hidden = encoder_hidden.to(device)
+            for di in range(target_length):
+                decoder_output, decoder_hidden, _ = self.decoder(
+                    decoder_input, batch_size, decoder_hidden, encoder_outputs)
+
+                tmp_loss = self.criterion(decoder_output, target_tensor[di])
+                decoder_input = target_tensor[di]
+                loss += tmp_loss
+
+            return loss.item() / target_length
+
+    def trainIters(self, src, trg):
+        val_size = self.val_size
+        data_train = [(torch.LongTensor(s), torch.LongTensor(t))
+                      for s, t in zip(src[:-val_size], trg[:-val_size])]
+        data_val = [(torch.LongTensor(s), torch.LongTensor(t))
+                    for s, t in zip(src[-val_size:], trg[-val_size:])]
         train_loader = DataLoader(
-            data, batch_size=self.batch_size, shuffle=True)
+            data_train, batch_size=self.batch_size, shuffle=True)
+
+        val_loader = DataLoader(
+            data_val, batch_size=self.batch_size, shuffle=True)
 
         # batchを作る
-        plot_losses = []
-        plot_loss_total = 0
-
+        train_losses = []
+        val_losses = []
+        total_loss = 0
         for epoch in range(self.epochs):
             print("epoch{} start".format(epoch+1))
             start = time.time()
-            print_loss_total = 0
+            epoch_loss = 0
             for batch_x, batch_y in train_loader:
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
                 loss = self.train(batch_x, batch_y)
-                print_loss_total += loss
-                plot_loss_total += loss
+                epoch_loss += loss
+                total_loss += loss
+
+            # calc validation loss
+            val_loss = 0
+            for batch_x, batch_y in val_loader:
+                batch_x = batch_x.to(device)
+                batch_y = batch_y.to(device)
+                val_loss += self.validation(batch_x, batch_y)
+            print("val_loss->", val_loss)
 
             if epoch % self.print_every == 0:
-                print_loss_avg = print_loss_total/self.print_every
-                print_loss_total = 0
-                print("loss_av in eopch{}=> {}".format(epoch, print_loss_avg))
+                loss_epoch_ave = epoch_loss/self.print_every
+                epoch_loss = 0
+                print("loss_av in eopch{}=> {}".format(epoch, loss_epoch_ave))
                 print("time->", time.time() - start)
 
             if epoch % self.plot_epoch == 0:
-                plot_loss_avg = plot_loss_total/self.plot_epoch
-                plot_losses.append(plot_loss_avg)
-                plot_loss_total = 0
-        showPlot(plot_losses)
+                plot_loss_avg = total_loss/self.plot_epoch
+                train_losses.append(plot_loss_avg)
+                val_losses.append(val_loss)
+                total_loss = 0
+        # showPlot(train_losses)
+        show_loss_plot(train_losses, val_losses)
 
     def translate(self, input):
         ids = torch.tensor(input, dtype=torch.long).view(-1, 1).to(device)
@@ -244,11 +294,11 @@ class Seq2Seq:
             decoder_hidden = encoder_hidden
 
             decoded_ids = []
-            #decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
+            # decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
             for di in range(self.translate_length):
                 decoder_output, decoder_hidden, decoder_attention = self.decoder(
                     decoder_input, 1, decoder_hidden, encoder_outputs)
-                #decoder_attentions[di] = decoder_attention.data
+                # decoder_attentions[di] = decoder_attention.data
                 topv, topi = decoder_output.topk(1)
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
