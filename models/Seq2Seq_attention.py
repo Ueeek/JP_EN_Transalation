@@ -3,7 +3,7 @@ import time
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
-from utils.plot_hist import showPlot, show_loss_plot
+from utils.plot_hist import show_loss_plot
 from torch.utils.data import DataLoader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -148,8 +148,7 @@ class Seq2Seq:
         self.batch_size = config["batch_size"]
         self.epochs = config["epochs"]
 
-    def train(self, input_tensor, target_tensor):
-
+    def calc_loss(self, input_tensor, target_tensor):
         batch_size = input_tensor.size()[0]
         # print("batch_size->", input_tensor.size())
 
@@ -184,48 +183,20 @@ class Seq2Seq:
             tmp_loss = self.criterion(decoder_output, target_tensor[di])
             decoder_input = target_tensor[di]
             loss += tmp_loss
+        return loss
 
+    def train(self, input_tensor, target_tensor):
+        loss = self.calc_loss(input_tensor, target_tensor)
         # back propagate
         loss.backward()
         self.encoder_optimizer.step()
         self.decoder_opimizer.step()
-        return loss.item() / target_length
+        return loss.item() / input_tensor.size()[0]
 
     def validation(self, input_tensor, target_tensor):
         with torch.no_grad():
-            batch_size = input_tensor.size()[0]
-            encoder_hidden = self.encoder.initHidden(batch_size)
-
-            self.encoder_optimizer.zero_grad()
-            self.decoder_opimizer.zero_grad()
-            input_tensor = input_tensor.transpose(0, 1)
-            target_tensor = target_tensor.transpose(0, 1)
-
-            input_length = input_tensor.size()[0]
-            target_length = target_tensor.size()[0]
-
-            # encoder
-            encoder_outputs = torch.zeros(
-                self.MAX_LENGTH, batch_size, self.n_hidden).to(device)
-            loss = 0
-            for ei in range(input_length):
-                encoder_output, encoder_hidden = self.encoder(
-                    input_tensor[ei], batch_size, encoder_hidden)
-                encoder_outputs[ei] = encoder_output[0]
-
-            # decoder
-            decoder_input = torch.LongTensor(
-                [self.SOS_token]*batch_size).to(device)
-            decoder_hidden = encoder_hidden.to(device)
-            for di in range(target_length):
-                decoder_output, decoder_hidden, _ = self.decoder(
-                    decoder_input, batch_size, decoder_hidden, encoder_outputs)
-
-                tmp_loss = self.criterion(decoder_output, target_tensor[di])
-                decoder_input = target_tensor[di]
-                loss += tmp_loss
-
-            return loss.item() / target_length
+            loss = self.calc_loss(input_tensor, target_tensor)
+        return loss.item() / input_tensor.size()[0]
 
     def trainIters(self, src, trg):
         val_size = self.val_size
@@ -242,17 +213,16 @@ class Seq2Seq:
         # batchを作る
         train_losses = []
         val_losses = []
-        total_loss = 0
         for epoch in range(self.epochs):
-            print("epoch{} start".format(epoch+1))
             start = time.time()
             epoch_loss = 0
+            batch_cnt = 0
             for batch_x, batch_y in train_loader:
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
                 loss = self.train(batch_x, batch_y)
                 epoch_loss += loss
-                total_loss += loss
+                batch_cnt += 1
 
             # calc validation loss
             val_loss = 0
@@ -260,20 +230,11 @@ class Seq2Seq:
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
                 val_loss += self.validation(batch_x, batch_y)
-            print("val_loss->", val_loss)
-
-            if epoch % self.print_every == 0:
-                loss_epoch_ave = epoch_loss/self.print_every
-                epoch_loss = 0
-                print("loss_av in eopch{}=> {}".format(epoch, loss_epoch_ave))
-                print("time->", time.time() - start)
-
-            if epoch % self.plot_epoch == 0:
-                plot_loss_avg = total_loss/self.plot_epoch
-                train_losses.append(plot_loss_avg)
-                val_losses.append(val_loss)
-                total_loss = 0
-        # showPlot(train_losses)
+            print("epoch{}. time->{}".format(epoch+1, time.time()-start))
+            print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss))
+            print("----------------=")
+            train_losses.append(epoch_loss)
+            val_losses.append(val_loss)
         show_loss_plot(train_losses, val_losses)
 
     def translate(self, input):
