@@ -226,15 +226,17 @@ class Seq2Seq:
 
             # calc validation loss
             val_loss = 0
+            val_bacth=0
             for batch_x, batch_y in val_loader:
+                val_bacth+=1
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
                 val_loss += self.validation(batch_x, batch_y)
             print("epoch{}. time->{}".format(epoch+1, time.time()-start))
-            print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss))
-            print("----------------=")
-            train_losses.append(epoch_loss)
-            val_losses.append(val_loss)
+            print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss/val_bacth))
+            print("----------------")
+            train_losses.append(epoch_loss/batch_cnt)
+            val_losses.append(val_loss/val_bacth)
         show_loss_plot(train_losses, val_losses)
 
     def translate(self, input):
