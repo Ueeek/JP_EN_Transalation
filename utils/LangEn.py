@@ -11,13 +11,19 @@ class LangEn:
         self.SOS_token = config["SOS_token"]
         self.EOS_token = config["EOS_token"]
         self.UNK_token = config["UNK_token"]
+        self.mask_token = config["mask_token"]
         self.max_features = config["en_voc"]
 
         self.word2index = {"SOS": self.SOS_token,
-                           "EOS": self.EOS_token, "UNK": self.UNK_token}
+                           "EOS": self.EOS_token,
+                           "UNK": self.UNK_token,
+                           "MASK": self.mask_token
+                           }
         self.word2count = {}
         self.index2word = {self.SOS_token: "SOS",
-                           self.EOS_token: "EOS", self.UNK_token: "UNK"}
+                           self.EOS_token: "EOS",
+                           self.UNK_token: "UNK",
+                           self.mask_token: "MASK"}
         self.n_words = 4
         self.tokenizer = mos.MosesTokenizer("en")
 
