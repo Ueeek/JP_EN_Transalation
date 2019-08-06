@@ -178,7 +178,7 @@ class Seq2Seq:
 
         # encoder
         encoder_outputs = torch.zeros(
-            self.MAX_LENGTH, batch_size, self.n_hidden).to(device)
+            input_length, batch_size, self.n_hidden).to(device)
         loss = 0
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(
@@ -188,14 +188,14 @@ class Seq2Seq:
         # decoder
         decoder_input = torch.LongTensor(
             [self.SOS_token]*batch_size).to(device)
-        decoder_hidden = encoder_hidden.to(device)
+        decoder_hidden = encoder_hidden
         for di in range(target_length):
             decoder_output, decoder_hidden, _ = self.decoder(
                 decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
             tmp_loss = self.criterion(decoder_output, target_tensor[di])
             # print("tmp_loss->", tmp_loss)
-            decoder_input = target_tensor[di]
+            decoder_input = target_tensor[di]  # teacher forcing
             loss += tmp_loss
         return loss
 
@@ -215,12 +215,11 @@ class Seq2Seq:
             loss = self.calc_loss(input_tensor, target_tensor)
         return loss.item() / input_tensor.size()[0]
 
-    def trainIters(self, src, trg):
-        val_size = self.val_size
+    def trainIters(self, src, trg, val_src, val_trg):
         data_train = [(torch.LongTensor(s), torch.LongTensor(t))
-                      for s, t in zip(src[:-val_size], trg[:-val_size])]
+                      for s, t in zip(src, trg)]
         data_val = [(torch.LongTensor(s), torch.LongTensor(t))
-                    for s, t in zip(src[-val_size:], trg[-val_size:])]
+                    for s, t in zip(val_src, val_trg)]
         train_loader = DataLoader(
             data_train, batch_size=self.batch_size, shuffle=True)
 
@@ -269,12 +268,13 @@ class Seq2Seq:
             input_length = ids.size()[0]
             encoder_hidden = self.encoder.initHidden(1)
             encoder_outputs = torch.zeros(
-                self.MAX_LENGTH, 1, self.n_hidden).to(device)
+                input_length, 1, self.n_hidden).to(device)
 
             for ei in range(input_length):
                 encoder_output, encoder_hidden = self.encoder(
                     ids[ei], 1, encoder_hidden)
                 encoder_outputs[ei] = encoder_output[0]
+            #print("encoder_outputs->", encoder_outputs.size())
 
             decoder_input = torch.tensor([self.SOS_token]*1).to(device)
 
@@ -283,19 +283,17 @@ class Seq2Seq:
             decoded_ids = []
             # decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
             for di in range(self.translate_length):
-                #print("dec_inp->", decoder_input.size())
+                #print("dec_inp->", decoder_input)
                 decoder_output, decoder_hidden, _ = self.decoder(
                     decoder_input, 1, decoder_hidden, encoder_outputs)
                 # decoder_attentions[di] = decoder_attention.data
                 topv, topi = decoder_output.topk(1)
-                #print("topv-", topv, topi.item())
-                #print("topv,toppi->", decoder_output.topk(2))
-                #print("topv,toppi without data->", decoder_output.data.topk(2))
+                #print("topi->", topi.item())
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
                     break
                 else:
+                    #print("dec-out->", topi.item())
                     decoded_ids.append(topi.item())
-                #decoder_input = topi.squeeze().detach()
-                decoder_input = topi.view(1).to(device)
+                decoder_input = topi.squeeze(1)
         return decoded_ids
