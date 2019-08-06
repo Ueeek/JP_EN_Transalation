@@ -25,7 +25,8 @@ class EncoderRnn(nn.Module):
                 self.input_size, self.hidden_size, padding_idx=self.mask_token)
         else:
             self.embedding = nn.Embedding.from_pretrained(
-                emb, freze=False, padding_index=self.mask_token)
+                emb, freeze=False, padding_idx=self.mask_token)
+
         self.gru = nn.GRU(
             self.hidden_size, self.hidden_size, num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
@@ -34,8 +35,9 @@ class EncoderRnn(nn.Module):
     def forward(self, input, batch_size, hidden):
         embedded = self.embedding(input).view(
             1, batch_size, self.hidden_size)
-        output = self.batch_norm(embedded[0]).view(
-            1, batch_size, -1).to(device)
+        # output = self.batch_norm(embedded[0]).view(
+        #    1, batch_size, -1).to(device)
+        output = embedded
         output, hidden = self.gru(output, hidden)
         output = self.linear(output)
         return output, hidden
@@ -113,8 +115,8 @@ class AttentionDecoderRnn(nn.Module):
         embedded = self.embedding(input).view(
             1, batch_size, self.hidden_size).to(device)
         # gru_in = (1,batch,hidden)
-        embedded = self.batch_norm(embedded[0]).view(
-            1, batch_size, -1).to(device)
+        # embedded = self.batch_norm(embedded[0]).view(
+        #   1, batch_size, -1).to(device)
         gru_in = F.relu(embedded)
         # gru_out = (1,batch.hidden*2)
         # hidden_out = (4,batch,hidden)
@@ -122,8 +124,8 @@ class AttentionDecoderRnn(nn.Module):
         # gru_out_linear=(1,batch,hidden) <- (1,batch,hidden*2)
         gru_out_linear = self.linear(gru_out)
         # attn=(batch,hidden)
-        #attn = self.attention_layer(encoder_outputs, gru_out_linear)
-        attn = gru_out_linear[0]
+        attn = self.attention_layer(encoder_outputs, gru_out_linear)
+        # attn = gru_out_linear[0]
         # output->(batch,output_size)
         output = self.out(attn)
         output = self.softmax(output)
@@ -135,8 +137,6 @@ class AttentionDecoderRnn(nn.Module):
 
 class Seq2Seq:
     def __init__(self, config, enc_emb=None, dec_emb=None):
-        self.print_every = 10
-        self.plot_epoch = 10
         self.learning_rate = config["learning_rate"]
         self.MAX_LENGTH = config["MAX_LENGTH"]
         self.EOS_token = config["EOS_token"]
@@ -161,6 +161,7 @@ class Seq2Seq:
         self.epochs = config["epochs"]
 
     def calc_loss(self, input_tensor, target_tensor):
+        # input_tensor=(batch_size,leng)
         batch_size = input_tensor.size()[0]
         # print("batch_size->", input_tensor.size())
 
@@ -193,7 +194,7 @@ class Seq2Seq:
                 decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
             tmp_loss = self.criterion(decoder_output, target_tensor[di])
-            #print("tmp_loss->", tmp_loss)
+            # print("tmp_loss->", tmp_loss)
             decoder_input = target_tensor[di]
             loss += tmp_loss
         return loss
@@ -225,6 +226,7 @@ class Seq2Seq:
 
         val_loader = DataLoader(
             data_val, batch_size=self.batch_size, shuffle=True)
+        print("train_size:{} - val_size:{}".format(len(data_train), len(data_val)))
 
         # batchを作る
         train_losses = []
@@ -251,15 +253,17 @@ class Seq2Seq:
             print("Epoch {}/{}".format(epoch+1, self.epochs))
             print("{:.0f} - loss: {:.5f} - val-loss: {:.5f}".format(time.time() -
                                                                     start, epoch_loss/batch_cnt, val_loss/val_bacth))
-            #print("loss->{}, val_loss->{}".format(epoch_loss, val_loss))
-            #print("epoch{}. time->{}".format(epoch+1, time.time()-start))
-            #print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss/val_bacth))
+            # print("loss->{}, val_loss->{}".format(epoch_loss, val_loss))
+            # print("epoch{}. time->{}".format(epoch+1, time.time()-start))
+            # print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss/val_bacth))
             print("----------------")
             train_losses.append(epoch_loss/batch_cnt)
             val_losses.append(val_loss/val_bacth)
         show_loss_plot(train_losses, val_losses)
 
+    # FixME tensorの形がやばそう。batchnormのとこで、2次元になっててerror(batch　処理にした方が楽?)
     def translate(self, input):
+        # ids=(input_len,1)
         ids = torch.tensor(input, dtype=torch.long).view(-1, 1).to(device)
         with torch.no_grad():
             input_length = ids.size()[0]
@@ -270,23 +274,28 @@ class Seq2Seq:
             for ei in range(input_length):
                 encoder_output, encoder_hidden = self.encoder(
                     ids[ei], 1, encoder_hidden)
-                encoder_outputs[ei] += encoder_output[0]
+                encoder_outputs[ei] = encoder_output[0]
 
-            decoder_input = torch.tensor([[self.SOS_token]]).to(device)
+            decoder_input = torch.tensor([self.SOS_token]*1).to(device)
 
             decoder_hidden = encoder_hidden
 
             decoded_ids = []
             # decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
             for di in range(self.translate_length):
-                decoder_output, decoder_hidden, decoder_attention = self.decoder(
+                #print("dec_inp->", decoder_input.size())
+                decoder_output, decoder_hidden, _ = self.decoder(
                     decoder_input, 1, decoder_hidden, encoder_outputs)
                 # decoder_attentions[di] = decoder_attention.data
                 topv, topi = decoder_output.topk(1)
+                #print("topv-", topv, topi.item())
+                #print("topv,toppi->", decoder_output.topk(2))
+                #print("topv,toppi without data->", decoder_output.data.topk(2))
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
                     break
                 else:
                     decoded_ids.append(topi.item())
-                decoder_input = topi.squeeze().detach()
-            return decoded_ids
+                #decoder_input = topi.squeeze().detach()
+                decoder_input = topi.view(1).to(device)
+        return decoded_ids
