@@ -18,19 +18,24 @@ class EncoderRnn(nn.Module):
         super(EncoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.input_size = config["input_dim"]
+        self.mask_token = config["mask_token"]
 
         if emb is None:
-            self.embedding = nn.Embedding(self.input_size, self.hidden_size)
+            self.embedding = nn.Embedding(
+                self.input_size, self.hidden_size, padding_idx=self.mask_token)
         else:
-            self.embedding = nn.Embedding.from_pretrained(emb)
+            self.embedding = nn.Embedding.from_pretrained(
+                emb, freze=False, padding_index=self.mask_token)
         self.gru = nn.GRU(
             self.hidden_size, self.hidden_size, num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
+        self.batch_norm = nn.BatchNorm1d(self.hidden_size)
 
     def forward(self, input, batch_size, hidden):
         embedded = self.embedding(input).view(
             1, batch_size, self.hidden_size)
-        output = embedded
+        output = self.batch_norm(embedded[0]).view(
+            1, batch_size, -1).to(device)
         output, hidden = self.gru(output, hidden)
         output = self.linear(output)
         return output, hidden
@@ -83,12 +88,16 @@ class AttentionDecoderRnn(nn.Module):
         self.output_size = config["output_dim"]
         self.max_length = config["MAX_LENGTH"]
         self.attention_layer = Attention(config)
+        self.mask_token = config["mask_token"]
 
         if emb is None:
-            self.embedding = nn.Embedding(self.output_size, self.hidden_size)
+            self.embedding = nn.Embedding(
+                self.output_size, self.hidden_size, padding_idx=self.mask_token)
         else:
-            self.embedding = nn.Embedding.from_pretrained(emb)
+            self.embedding = nn.Embedding.from_pretrained(
+                emb, freeze=False, padding_idx=self.mask_token)
 
+        self.batch_norm = nn.BatchNorm1d(self.hidden_size)
         self.gru = nn.GRU(self.hidden_size, self.hidden_size,
                           num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
@@ -104,6 +113,8 @@ class AttentionDecoderRnn(nn.Module):
         embedded = self.embedding(input).view(
             1, batch_size, self.hidden_size).to(device)
         # gru_in = (1,batch,hidden)
+        embedded = self.batch_norm(embedded[0]).view(
+            1, batch_size, -1).to(device)
         gru_in = F.relu(embedded)
         # gru_out = (1,batch.hidden*2)
         # hidden_out = (4,batch,hidden)
@@ -111,8 +122,8 @@ class AttentionDecoderRnn(nn.Module):
         # gru_out_linear=(1,batch,hidden) <- (1,batch,hidden*2)
         gru_out_linear = self.linear(gru_out)
         # attn=(batch,hidden)
-        attn = self.attention_layer(encoder_outputs, gru_out_linear)
-        # attn = gru_out_linear[0]
+        #attn = self.attention_layer(encoder_outputs, gru_out_linear)
+        attn = gru_out_linear[0]
         # output->(batch,output_size)
         output = self.out(attn)
         output = self.softmax(output)
@@ -133,6 +144,7 @@ class Seq2Seq:
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
         self.val_size = config["val_size"]
+        self.mask_token = config["mask_token"]
 
         enc_emb = torch.FloatTensor(enc_emb).to(
             device) if not enc_emb is None else None
@@ -140,7 +152,7 @@ class Seq2Seq:
             device) if not dec_emb is None else None
         self.encoder = EncoderRnn(config, enc_emb).to(device)
         self.decoder = AttentionDecoderRnn(config, dec_emb).to(device)
-        self.criterion = nn.NLLLoss().to(device)
+        self.criterion = nn.NLLLoss(ignore_index=self.mask_token).to(device)
         self. encoder_optimizer = optim.SGD(
             self.encoder.parameters(), lr=self.learning_rate)
         self.decoder_opimizer = optim.SGD(
@@ -181,6 +193,7 @@ class Seq2Seq:
                 decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
             tmp_loss = self.criterion(decoder_output, target_tensor[di])
+            #print("tmp_loss->", tmp_loss)
             decoder_input = target_tensor[di]
             loss += tmp_loss
         return loss
@@ -188,6 +201,9 @@ class Seq2Seq:
     def train(self, input_tensor, target_tensor):
         loss = self.calc_loss(input_tensor, target_tensor)
         # back propagate
+        if torch.isnan(loss):
+            print("nan loss->", loss)
+
         loss.backward()
         self.encoder_optimizer.step()
         self.decoder_opimizer.step()
@@ -226,14 +242,15 @@ class Seq2Seq:
 
             # calc validation loss
             val_loss = 0
-            val_bacth=0
+            val_bacth = 0
             for batch_x, batch_y in val_loader:
-                val_bacth+=1
+                val_bacth += 1
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
                 val_loss += self.validation(batch_x, batch_y)
-            print("Epoch {}/{}".format(epoch,self.epochs))
-            print("{:.0f} - loss: {:.5f} - val-loss: {:.5f}".format(time.time()-start,epoch_loss/batch_cnt,val_loss/val_bacth))
+            print("Epoch {}/{}".format(epoch+1, self.epochs))
+            print("{:.0f} - loss: {:.5f} - val-loss: {:.5f}".format(time.time() -
+                                                                    start, epoch_loss/batch_cnt, val_loss/val_bacth))
             #print("loss->{}, val_loss->{}".format(epoch_loss, val_loss))
             #print("epoch{}. time->{}".format(epoch+1, time.time()-start))
             #print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss/val_bacth))

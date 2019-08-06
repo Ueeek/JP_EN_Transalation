@@ -44,7 +44,7 @@ class LangEn:
             try:
                 word_id = self.word2index[word]
             except KeyError:
-                word_id = self.word2index["UNK"]
+                word_id = self.UNK_token
             ret.append(word_id)
         ret.append(self.EOS_token)
         return ret
