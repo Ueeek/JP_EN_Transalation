@@ -14,7 +14,7 @@ def build_en_emb(config, w2id):
     print("voc->", vocabulary_size)
     cnt = 0
     for word, i in w2id.items():
-        if i == 0 or i == 1 or i == 2:
+        if i == 0 or i == 1 or i == 2 or i == 3:
             continue
         try:
             en_embedding_vector = en_word2vec[word]
@@ -37,7 +37,7 @@ def build_jp_emb(config, w2id):
     print("voc->", vocabulary_size)
     cnt = 0
     for word, i in w2id.items():
-        if i == 0 or i == 1 or i == 2:
+        if i == 0 or i == 1 or i == 2 or i == 3:
             continue
         try:
             jp_embedding_vector = jp_word2vec[word]

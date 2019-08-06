@@ -18,18 +18,25 @@ class EncoderRnn(nn.Module):
         super(EncoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.input_size = config["input_dim"]
+        self.mask_token = config["mask_token"]
 
         if emb is None:
-            self.embedding = nn.Embedding(self.input_size, self.hidden_size)
+            self.embedding = nn.Embedding(
+                self.input_size, self.hidden_size, padding_idx=self.mask_token)
         else:
-            self.embedding = nn.Embedding.from_pretrained(emb)
+            self.embedding = nn.Embedding.from_pretrained(
+                emb, freeze=False, padding_idx=self.mask_token)
+
         self.gru = nn.GRU(
             self.hidden_size, self.hidden_size, num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
+        self.batch_norm = nn.BatchNorm1d(self.hidden_size)
 
     def forward(self, input, batch_size, hidden):
         embedded = self.embedding(input).view(
             1, batch_size, self.hidden_size)
+        # output = self.batch_norm(embedded[0]).view(
+        #    1, batch_size, -1).to(device)
         output = embedded
         output, hidden = self.gru(output, hidden)
         output = self.linear(output)
@@ -83,12 +90,16 @@ class AttentionDecoderRnn(nn.Module):
         self.output_size = config["output_dim"]
         self.max_length = config["MAX_LENGTH"]
         self.attention_layer = Attention(config)
+        self.mask_token = config["mask_token"]
 
         if emb is None:
-            self.embedding = nn.Embedding(self.output_size, self.hidden_size)
+            self.embedding = nn.Embedding(
+                self.output_size, self.hidden_size, padding_idx=self.mask_token)
         else:
-            self.embedding = nn.Embedding.from_pretrained(emb)
+            self.embedding = nn.Embedding.from_pretrained(
+                emb, freeze=False, padding_idx=self.mask_token)
 
+        self.batch_norm = nn.BatchNorm1d(self.hidden_size)
         self.gru = nn.GRU(self.hidden_size, self.hidden_size,
                           num_layers=2, bidirectional=True)
         self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
@@ -104,6 +115,8 @@ class AttentionDecoderRnn(nn.Module):
         embedded = self.embedding(input).view(
             1, batch_size, self.hidden_size).to(device)
         # gru_in = (1,batch,hidden)
+        # embedded = self.batch_norm(embedded[0]).view(
+        #   1, batch_size, -1).to(device)
         gru_in = F.relu(embedded)
         # gru_out = (1,batch.hidden*2)
         # hidden_out = (4,batch,hidden)
@@ -124,8 +137,6 @@ class AttentionDecoderRnn(nn.Module):
 
 class Seq2Seq:
     def __init__(self, config, enc_emb=None, dec_emb=None):
-        self.print_every = 10
-        self.plot_epoch = 10
         self.learning_rate = config["learning_rate"]
         self.MAX_LENGTH = config["MAX_LENGTH"]
         self.EOS_token = config["EOS_token"]
@@ -133,6 +144,7 @@ class Seq2Seq:
         self.n_hidden = config["n_hidden"]
         self.translate_length = config["translate_length"]
         self.val_size = config["val_size"]
+        self.mask_token = config["mask_token"]
 
         enc_emb = torch.FloatTensor(enc_emb).to(
             device) if not enc_emb is None else None
@@ -140,7 +152,7 @@ class Seq2Seq:
             device) if not dec_emb is None else None
         self.encoder = EncoderRnn(config, enc_emb).to(device)
         self.decoder = AttentionDecoderRnn(config, dec_emb).to(device)
-        self.criterion = nn.NLLLoss().to(device)
+        self.criterion = nn.NLLLoss(ignore_index=self.mask_token).to(device)
         self. encoder_optimizer = optim.SGD(
             self.encoder.parameters(), lr=self.learning_rate)
         self.decoder_opimizer = optim.SGD(
@@ -149,6 +161,7 @@ class Seq2Seq:
         self.epochs = config["epochs"]
 
     def calc_loss(self, input_tensor, target_tensor):
+        # input_tensor=(batch_size,leng)
         batch_size = input_tensor.size()[0]
         # print("batch_size->", input_tensor.size())
 
@@ -165,7 +178,7 @@ class Seq2Seq:
 
         # encoder
         encoder_outputs = torch.zeros(
-            self.MAX_LENGTH, batch_size, self.n_hidden).to(device)
+            input_length, batch_size, self.n_hidden).to(device)
         loss = 0
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(
@@ -175,19 +188,23 @@ class Seq2Seq:
         # decoder
         decoder_input = torch.LongTensor(
             [self.SOS_token]*batch_size).to(device)
-        decoder_hidden = encoder_hidden.to(device)
+        decoder_hidden = encoder_hidden
         for di in range(target_length):
             decoder_output, decoder_hidden, _ = self.decoder(
                 decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
             tmp_loss = self.criterion(decoder_output, target_tensor[di])
-            decoder_input = target_tensor[di]
+            # print("tmp_loss->", tmp_loss)
+            decoder_input = target_tensor[di]  # teacher forcing
             loss += tmp_loss
         return loss
 
     def train(self, input_tensor, target_tensor):
         loss = self.calc_loss(input_tensor, target_tensor)
         # back propagate
+        if torch.isnan(loss):
+            print("nan loss->", loss)
+
         loss.backward()
         self.encoder_optimizer.step()
         self.decoder_opimizer.step()
@@ -198,17 +215,17 @@ class Seq2Seq:
             loss = self.calc_loss(input_tensor, target_tensor)
         return loss.item() / input_tensor.size()[0]
 
-    def trainIters(self, src, trg):
-        val_size = self.val_size
+    def trainIters(self, src, trg, val_src, val_trg):
         data_train = [(torch.LongTensor(s), torch.LongTensor(t))
-                      for s, t in zip(src[:-val_size], trg[:-val_size])]
+                      for s, t in zip(src, trg)]
         data_val = [(torch.LongTensor(s), torch.LongTensor(t))
-                    for s, t in zip(src[-val_size:], trg[-val_size:])]
+                    for s, t in zip(val_src, val_trg)]
         train_loader = DataLoader(
             data_train, batch_size=self.batch_size, shuffle=True)
 
         val_loader = DataLoader(
             data_val, batch_size=self.batch_size, shuffle=True)
+        print("train_size:{} - val_size:{}".format(len(data_train), len(data_val)))
 
         # batchを作る
         train_losses = []
@@ -226,50 +243,57 @@ class Seq2Seq:
 
             # calc validation loss
             val_loss = 0
-            val_bacth=0
+            val_bacth = 0
             for batch_x, batch_y in val_loader:
-                val_bacth+=1
+                val_bacth += 1
                 batch_x = batch_x.to(device)
                 batch_y = batch_y.to(device)
                 val_loss += self.validation(batch_x, batch_y)
-            print("Epoch {}/{}".format(epoch,self.epochs))
-            print("{:.0f} - loss: {:.5f} - val-loss: {:.5f}".format(time.time()-start,epoch_loss/batch_cnt,val_loss/val_bacth))
-            #print("loss->{}, val_loss->{}".format(epoch_loss, val_loss))
-            #print("epoch{}. time->{}".format(epoch+1, time.time()-start))
-            #print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss/val_bacth))
+            print("Epoch {}/{}".format(epoch+1, self.epochs))
+            print("{:.0f} - loss: {:.5f} - val-loss: {:.5f}".format(time.time() -
+                                                                    start, epoch_loss/batch_cnt, val_loss/val_bacth))
+            # print("loss->{}, val_loss->{}".format(epoch_loss, val_loss))
+            # print("epoch{}. time->{}".format(epoch+1, time.time()-start))
+            # print("loss->{}, val_loss->{}".format(epoch_loss/batch_cnt, val_loss/val_bacth))
             print("----------------")
             train_losses.append(epoch_loss/batch_cnt)
             val_losses.append(val_loss/val_bacth)
         show_loss_plot(train_losses, val_losses)
 
+    # FixME tensorの形がやばそう。batchnormのとこで、2次元になっててerror(batch　処理にした方が楽?)
     def translate(self, input):
+        # ids=(input_len,1)
         ids = torch.tensor(input, dtype=torch.long).view(-1, 1).to(device)
         with torch.no_grad():
             input_length = ids.size()[0]
             encoder_hidden = self.encoder.initHidden(1)
             encoder_outputs = torch.zeros(
-                self.MAX_LENGTH, 1, self.n_hidden).to(device)
+                input_length, 1, self.n_hidden).to(device)
 
             for ei in range(input_length):
                 encoder_output, encoder_hidden = self.encoder(
                     ids[ei], 1, encoder_hidden)
-                encoder_outputs[ei] += encoder_output[0]
+                encoder_outputs[ei] = encoder_output[0]
+            #print("encoder_outputs->", encoder_outputs.size())
 
-            decoder_input = torch.tensor([[self.SOS_token]]).to(device)
+            decoder_input = torch.tensor([self.SOS_token]*1).to(device)
 
             decoder_hidden = encoder_hidden
 
             decoded_ids = []
             # decoder_attentions = torch.zeros(self.MAX_LENGTH, self.MAX_LENGTH)
             for di in range(self.translate_length):
-                decoder_output, decoder_hidden, decoder_attention = self.decoder(
+                #print("dec_inp->", decoder_input)
+                decoder_output, decoder_hidden, _ = self.decoder(
                     decoder_input, 1, decoder_hidden, encoder_outputs)
                 # decoder_attentions[di] = decoder_attention.data
                 topv, topi = decoder_output.topk(1)
+                #print("topi->", topi.item())
                 if topi.item() == self.EOS_token:
                     decoded_ids.append(self.EOS_token)
                     break
                 else:
+                    #print("dec-out->", topi.item())
                     decoded_ids.append(topi.item())
-                decoder_input = topi.squeeze().detach()
-            return decoded_ids
+                decoder_input = topi.squeeze(1)
+        return decoded_ids
