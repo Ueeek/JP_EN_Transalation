@@ -31,3 +31,5 @@
 * S2S_emn + attention layer
 
 ## performance
+* 20 epoch は少なそう
+* 劇的に良くなって感はない(学習が足りてないかも)
