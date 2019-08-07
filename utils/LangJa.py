@@ -28,6 +28,8 @@ class LangJa:
 
     def addWord(self, word):
         if word not in self.word2index:
+            if self.n_words >= self.max_features:
+                return
             self.word2index[word] = self.n_words
             self.word2count[word] = 1
             self.index2word[self.n_words] = word
@@ -54,11 +56,3 @@ class LangJa:
             word = self.index2word[id]
             ret.append(word)
         return ret
-
-    def get_word2id_dict(self):
-        top_freq = sorted(self.word2count.items(), key=lambda x: x[1], reverse=True)[
-            :self.max_features]
-        ret_dict = {}
-        for word, _ in top_freq:
-            ret_dict[word] = self.word2id[word]
-        return ret_dict

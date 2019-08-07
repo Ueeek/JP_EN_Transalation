@@ -9,24 +9,24 @@ from torch.utils.data import DataLoader
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-class EncoderRnn(nn.Module):
+class NormEncoderRnn(nn.Module):
     """
-    encoder
+    encoder + batch_norm+dropout
     """
 
     def __init__(self, config):
-        super(EncoderRnn, self).__init__()
+        super(NormEncoderRnn, self).__init__()
         self.emb_dim = config["emb_dim"]
         self.hidden_size = config["n_hidden"]
         self.input_size = config["input_dim"]
         self.mask_token = config["mask_token"]
         self.emb_dim = config["emb_dim"]
+        self.batch_norm = nn.BatchNorm1d(self.emb_dim)
 
         self.embedding = nn.Embedding(
             self.input_size, self.emb_dim, padding_idx=self.mask_token)
         self.gru = nn.GRU(
-            self.emb_dim, self.hidden_size, num_layers=2, bidirectional=True)
-        self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
+            self.emb_dim, self.hidden_size, num_layers=2, bidirectional=True, dropout=0.3)
 
     def forward(self, input, batch_size, hidden):
         """"
@@ -42,11 +42,14 @@ class EncoderRnn(nn.Module):
         hidden: tensor(4,batch,hidden)
 
         """
-        # embedded=(1,batch,emb_dim)
-        embedded = self.embedding(input).view(1, batch_size, self.emb_dim)
+        # embedded=(batch,emb_dim)
+        # batch_norm=(1,batch,emb_dim)
+        embedded = self.embedding(input)
+        batch_norm = self.batch_norm(embedded).view(
+            1, batch_size, self.emb_dim).to(device)
         # gru_output=(1,batch,hidden_dim*2)
         # hidden_output=(4,batch,hidden_dim)
-        gru_output, hidden_output = self.gru(embedded, hidden)
+        gru_output, hidden_output = self.gru(batch_norm, hidden)
 
         # add forward and backword
         encoder_output = gru_output[:, :, :self.hidden_size] + \
@@ -57,24 +60,24 @@ class EncoderRnn(nn.Module):
         return torch.zeros(4, batch_size, self.hidden_size).to(device)
 
 
-class DecoderRnn(nn.Module):
+class NormDecoderRnn(nn.Module):
     """
-    decoder RNN with attention
+    decoder RNN + batch_norm+dropout
     """
 
     def __init__(self, config):
-        super(DecoderRnn, self).__init__()
+        super(NormDecoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.output_size = config["output_dim"]
         self.max_length = config["MAX_LENGTH"]
         self.mask_token = config["mask_token"]
         self.emb_dim = config["emb_dim"]
 
+        self.batch_norm = nn.BatchNorm1d(self.emb_dim)
         self.embedding = nn.Embedding(
             self.output_size, self.emb_dim, padding_idx=self.mask_token)
         self.gru = nn.GRU(self.emb_dim, self.hidden_size,
-                          num_layers=2, bidirectional=True)
-        self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
+                          num_layers=2, bidirectional=True, dropout=0.3)
         self.out = nn.Linear(self.hidden_size, self.output_size)
         self.softmax = nn.LogSoftmax(dim=2)
 
@@ -92,10 +95,12 @@ class DecoderRnn(nn.Module):
         hidden: tensor(4,batch,hidden)
 
         """
-        # embedded = (1,batch,emb_dim)
-        embedded = self.embedding(input).view(
+        # embedded = (batch,emb_dim)
+        # batch_norm = (1,batch,emb_dim)
+        embedded = self.embedding(input)
+        batch_norm = self.batch_norm(embedded).view(
             1, batch_size, self.emb_dim).to(device)
-        gru_in = F.relu(embedded)
+        gru_in = F.relu(batch_norm)
         # gru_out = (1,batch.hidden*2)
         # hidden_out = (4,batch,hidden)
         gru_out, hidden_out = self.gru(gru_in, hidden)
@@ -122,8 +127,8 @@ class Seq2Seq:
         self.val_size = config["val_size"]
         self.mask_token = config["mask_token"]
 
-        self.encoder = EncoderRnn(config).to(device)
-        self.decoder = DecoderRnn(config).to(device)
+        self.encoder = NormEncoderRnn(config).to(device)
+        self.decoder = NormDecoderRnn(config).to(device)
         self.criterion = nn.NLLLoss(ignore_index=self.mask_token).to(device)
         self. encoder_optimizer = optim.Adam(
             self.encoder.parameters(), lr=self.learning_rate)
@@ -135,7 +140,6 @@ class Seq2Seq:
     def _calc_loss(self, input_tensor, target_tensor):
         # input_tensor=(batch_size,length)
         batch_size = input_tensor.size()[0]
-
         self.encoder_optimizer.zero_grad()
         self.decoder_optimizer.zero_grad()
 
