@@ -11,13 +11,19 @@ class LangEn:
         self.SOS_token = config["SOS_token"]
         self.EOS_token = config["EOS_token"]
         self.UNK_token = config["UNK_token"]
+        self.mask_token = config["mask_token"]
         self.max_features = config["en_voc"]
 
         self.word2index = {"SOS": self.SOS_token,
-                           "EOS": self.EOS_token, "UNK": self.UNK_token}
+                           "EOS": self.EOS_token,
+                           "UNK": self.UNK_token,
+                           "MASK": self.mask_token
+                           }
         self.word2count = {}
         self.index2word = {self.SOS_token: "SOS",
-                           self.EOS_token: "EOS", self.UNK_token: "UNK"}
+                           self.EOS_token: "EOS",
+                           self.UNK_token: "UNK",
+                           self.mask_token: "MASK"}
         self.n_words = 4
         self.tokenizer = mos.MosesTokenizer("en")
 
@@ -27,8 +33,6 @@ class LangEn:
 
     def addWord(self, word):
         if word not in self.word2index:
-            if self.n_words >= self.max_features:
-                return
             self.word2index[word] = self.n_words
             self.word2count[word] = 1
             self.index2word[self.n_words] = word
@@ -58,3 +62,11 @@ class LangEn:
                 word = "UNK"
             ret.append(word)
         return ret
+
+    def get_word2id_dict(self):
+        top_freq = sorted(self.word2count.items(), key=lambda x: x[1], reverse=True)[
+            :self.max_features]
+        ret_dict = {}
+        for word, _ in top_freq:
+            ret_dict[word] = self.word2id[word]
+        return ret_dict
