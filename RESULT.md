@@ -23,4 +23,13 @@
 * S2S_+ pretrained_embedding
 
 ### performance
-* 
+* 少し過学習が収まった感ある。
+* trainは20epoch回したけど、もうちょい回したら伸びそう
+
+## S2S_attention.py
+### model
+* S2S_emn + attention layer
+
+## performance
+* 20 epoch は少なそう
+* 劇的に良くなって感はない(学習が足りてないかも)
