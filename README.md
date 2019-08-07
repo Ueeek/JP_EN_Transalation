@@ -15,4 +15,4 @@
         * result plot,, etc..
 
 ## result
-[RESULT.md]{./RESULT.md}
+[RESULT.md](./RESULT.md)
