@@ -229,14 +229,17 @@ class Seq2Seq:
         show_loss_plot(train_losses, val_losses)
 
     # FixME tensorの形がやばそう。batchnormのとこで、2次元になっててerror(batch　処理にした方が楽?)
-    def translate(self, input):
+    def translate(self, input_tensor):
+        """
+        parameter
+        ------------
+            input_temnsor: (batch,length)
+        """
         with torch.no_grad():
-            batch_size = 1
-            # ids=(input_len,1)
-            input_tensor = torch.tensor(
-                input, dtype=torch.long).view(-1, batch_size).to(device)
-            input_length = input_tensor.size()[0]
+            batch_size = input_tensor.size()[0]
+            input_length = input_tensor.size()[1]
 
+            input_tensor = input_tensor.transpose(0, 1)
             # Encoder
             encoder_hidden = self.encoder.initHidden(batch_size)
             for ei in range(input_length):
@@ -249,15 +252,17 @@ class Seq2Seq:
 
             decoder_hidden = encoder_hidden
 
-            decoded_ids = []
+            decoded_ids = [[] for _ in range(batch_size)]
             for di in range(self.translate_length):
                 decoder_output, decoder_hidden = self.decoder(
                     decoder_input, batch_size, decoder_hidden)
-                topv, topi = decoder_output.topk(1)
-                if topi.item() == self.EOS_token:
-                    decoded_ids.append(self.EOS_token)
-                    break
-                else:
-                    decoded_ids.append(topi.item())
-                decoder_input = topi.squeeze(1)
+                # dec_out = (1,batch,out_size)
+                dec_out = decoder_output[0].argmax(dim=1)
+                for i in range(batch_size):
+                    decoded_ids[i].append(dec_out[i].item())
         return decoded_ids
+
+    def translateIter(self, src):
+        input_tensor = torch.tensor(
+            src, dtype=torch.long).view(len(src), -1).to(device)
+        return self.translate(input_tensor)
