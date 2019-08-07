@@ -23,4 +23,5 @@
 * S2S_+ pretrained_embedding
 
 ### performance
-* 
+* 少し過学習が収まった感ある。
+* trainは20epoch回したけど、もうちょい回したら伸びそう
