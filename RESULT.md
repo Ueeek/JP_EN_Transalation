@@ -25,3 +25,9 @@
 ### performance
 * 少し過学習が収まった感ある。
 * trainは20epoch回したけど、もうちょい回したら伸びそう
+
+## S2S_attention.py
+### model
+* S2S_emn + attention layer
+
+## performance

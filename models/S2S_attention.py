@@ -15,7 +15,7 @@ class EncoderRnn(nn.Module):
     """
 
     def __init__(self, config, emb=None):
-        super(EmbEncoderRnn, self).__init__()
+        super(EncoderRnn, self).__init__()
         self.emb_dim = config["emb_dim"]
         self.hidden_size = config["n_hidden"]
         self.input_size = config["input_dim"]
@@ -41,7 +41,7 @@ class EncoderRnn(nn.Module):
 
         Returns:
         ---------------
-        output: tensor(1,batch,hidden)
+        output: tensor(1,batch,hidden*2)
         hidden: tensor(4,batch,hidden)
 
         """
@@ -55,21 +55,68 @@ class EncoderRnn(nn.Module):
         gru_output, hidden_output = self.gru(batch_norm, hidden)
 
         # add forward and backword
-        encoder_output = gru_output[:, :, :self.hidden_size] + \
-            gru_output[:, :, self.hidden_size:]
+        # encoder_output = gru_output[:, :, :self.hidden_size] + \
+        #   gru_output[:, :, self.hidden_size:]
+        encoder_output = gru_output
         return encoder_output, hidden_output
 
     def initHidden(self, batch_size):
         return torch.zeros(4, batch_size, self.hidden_size).to(device)
 
 
-class EmbDecoderRnn(nn.Module):
+class Attention(nn.Module):
     """
-    decoder RNN + batch_norm+dropout
+    Attention Layer
+    """
+
+    def __init__(self, config):
+        super(Attention, self).__init__()
+        self.hidden_size = config["n_hidden"]
+
+    def forward(self, encoder_outputs, decoder_gru_output):
+        """
+        Parameters
+        -------------------
+                encoder_outputs:(input_len,batcj,hidden*2)
+                decoder_gru_output:(1,batch,hidden*2)
+
+        Returns     
+                attmsum: (1,batch,hidden*2)
+        --------------------
+        """
+
+        input_len, batch_size, _ = encoder_outputs.size()
+
+        # repeat(1,batch,hidden*2)->(input_len,batch_size,hidden*2)
+        rep_gru_out = decoder_gru_output.repeat(input_len, 1, 1)
+        # product(input_len,batch_size,hidden*2)
+        weight_product = rep_gru_out * encoder_outputs
+
+        # weight_sum(input_len,batch)
+        weight_sum = weight_product.sum(dim=2)
+
+        # weight_softmax(input_len,batch)
+        weight_softmax = F.softmax(weight_sum, dim=0).view(
+            input_len, batch_size, 1)
+
+        #output = (1,batch,output_size)
+        # repeat(input_len,batch_size,hidden*2)
+        rep_soft = weight_softmax.repeat(1, 1, self.hidden_size*2)
+        # product
+        # attn_mul(input_len,batch,hidden*2)
+        attn_mul = rep_soft * encoder_outputs
+        #attn_sum (batch,hidden*2)
+        attn_sum = attn_mul.sum(dim=0)
+        return attn_sum.view(1, batch_size, self.hidden_size*2).to(device)
+
+
+class AttnDecoderRnn(nn.Module):
+    """
+    decoder RNN + attention
     """
 
     def __init__(self, config, emb=None):
-        super(EmbDecoderRnn, self).__init__()
+        super(AttnDecoderRnn, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.output_size = config["output_dim"]
         self.max_length = config["MAX_LENGTH"]
@@ -79,21 +126,24 @@ class EmbDecoderRnn(nn.Module):
         self.batch_norm = nn.BatchNorm1d(self.emb_dim)
         if emb is None:
             self.embedding = nn.Embedding(
-                self.input_size, self.emb_dim, padding_idx=self.mask_token)
+                self.output_size, self.emb_dim, padding_idx=self.mask_token)
         else:
             self.embedding = nn.Embedding.from_pretrained(emb, freeze=False)
         self.gru = nn.GRU(self.emb_dim, self.hidden_size,
                           num_layers=2, bidirectional=True, dropout=0.3)
+        self.linear = nn.Linear(self.hidden_size*2, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
         self.softmax = nn.LogSoftmax(dim=2)
+        self.attention = Attention(config)
 
-    def forward(self, input, batch_size, hidden):
+    def forward(self, input, batch_size, hidden, encoder_outputs):
         """"
         Param:
         -------------
         input: tensor(batch_size)
         batch_size:int
         hidden: tensor(4,batch,hidden)
+        encoder_outputs:()
 
         Returns:
         ---------------
@@ -111,12 +161,15 @@ class EmbDecoderRnn(nn.Module):
         # hidden_out = (4,batch,hidden)
         gru_out, hidden_out = self.gru(gru_in, hidden)
 
-        # gru_output=(1,batch,hidden)
-        gru_output = gru_out[:, :, :self.hidden_size] + \
-            gru_out[:, :, self.hidden_size:]
-        output = self.out(gru_output)
+        # attn =(1,batch,hidden*2)
+        attn = self.attention(encoder_outputs, gru_out)
+        # lin =(1,batch,hidden)
+        lin = self.linear(attn)
+        lin = F.relu(lin)
+        #output = (1,batch,output_size)
+        output = self.out(lin)
         decoder_output = self.softmax(output)
-        return decoder_output, hidden_out
+        return decoder_output, hidden_out  # ,attn
 
     def _initHidden(self, batch_size):
         return torch(4, batch_size, self.hidden_size).to(device)
@@ -138,8 +191,8 @@ class Seq2Seq:
         dec_emb = torch.FloatTensor(dec_emb).to(
             device) if not dec_emb is None else None
 
-        self.encoder = EmbEncoderRnn(config, enc_emb).to(device)
-        self.decoder = EmbDecoderRnn(config, dec_emb).to(device)
+        self.encoder = EncoderRnn(config, enc_emb).to(device)
+        self.decoder = AttnDecoderRnn(config, dec_emb).to(device)
         self.criterion = nn.NLLLoss(ignore_index=self.mask_token).to(device)
         self. encoder_optimizer = optim.Adam(
             self.encoder.parameters(), lr=self.learning_rate)
@@ -166,9 +219,12 @@ class Seq2Seq:
         loss = 0
         # encoder_hidden =(4,batch,hidden)
         encoder_hidden = self.encoder.initHidden(batch_size)
+        encoder_outputs = torch.zeros(
+            input_length, batch_size, self.n_hidden*2).to(device)
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(
                 input_tensor[ei], batch_size, encoder_hidden)
+            encoder_outputs[ei] = encoder_output[0]
 
         # decoder
         decoder_input = torch.LongTensor(
@@ -176,7 +232,7 @@ class Seq2Seq:
         decoder_hidden = encoder_hidden
         for di in range(target_length):
             decoder_output, decoder_hidden = self.decoder(
-                decoder_input, batch_size, decoder_hidden)
+                decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
             tmp_loss = self.criterion(decoder_output[0], target_tensor[di])
             # print("tmp_loss->", tmp_loss)
@@ -254,11 +310,14 @@ class Seq2Seq:
             input_length = input_tensor.size()[1]
 
             input_tensor = input_tensor.transpose(0, 1)
+            encoder_outputs = torch.zeros(
+                input_length, batch_size, self.n_hidden*2).to(device)
             # Encoder
             encoder_hidden = self.encoder.initHidden(batch_size)
             for ei in range(input_length):
                 encoder_output, encoder_hidden = self.encoder(
                     input_tensor[ei], batch_size, encoder_hidden)
+                encoder_outputs[ei] = encoder_output[0]
 
             # Decoder
             decoder_input = torch.tensor(
@@ -269,12 +328,11 @@ class Seq2Seq:
             decoded_ids = [[] for _ in range(batch_size)]
             for di in range(self.translate_length):
                 decoder_output, decoder_hidden = self.decoder(
-                    decoder_input, batch_size, decoder_hidden)
+                    decoder_input, batch_size, decoder_hidden, encoder_outputs)
                 # dec_out = (1,batch,out_size)
                 dec_out = decoder_output[0].argmax(dim=1)
                 for i in range(batch_size):
                     decoded_ids[i].append(dec_out[i].item())
-                assert decoder_input.size() == dec_out.size()
                 decoder_input = dec_out
         return decoded_ids
 
