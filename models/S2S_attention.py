@@ -3,7 +3,7 @@ import time
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
-from utils.plot_hist import show_loss_plot
+from utils.plot_hist import show_loss_plot, show_attention
 from torch.utils.data import DataLoader
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -72,6 +72,7 @@ class Attention(nn.Module):
     def __init__(self, config):
         super(Attention, self).__init__()
         self.hidden_size = config["n_hidden"]
+        self.attn_weight = None
 
     def forward(self, encoder_outputs, decoder_gru_output):
         """
@@ -80,7 +81,7 @@ class Attention(nn.Module):
                 encoder_outputs:(input_len,batcj,hidden*2)
                 decoder_gru_output:(1,batch,hidden*2)
 
-        Returns     
+        Returns
                 attmsum: (1,batch,hidden*2)
         --------------------
         """
@@ -99,13 +100,15 @@ class Attention(nn.Module):
         weight_softmax = F.softmax(weight_sum, dim=0).view(
             input_len, batch_size, 1)
 
-        #output = (1,batch,output_size)
+        self.attn_weight = weight_softmax.view(input_len, batch_size)
+
+        # output = (1,batch,output_size)
         # repeat(input_len,batch_size,hidden*2)
         rep_soft = weight_softmax.repeat(1, 1, self.hidden_size*2)
         # product
         # attn_mul(input_len,batch,hidden*2)
         attn_mul = rep_soft * encoder_outputs
-        #attn_sum (batch,hidden*2)
+        # attn_sum (batch,hidden*2)
         attn_sum = attn_mul.sum(dim=0)
         return attn_sum.view(1, batch_size, self.hidden_size*2).to(device)
 
@@ -166,13 +169,16 @@ class AttnDecoderRnn(nn.Module):
         # lin =(1,batch,hidden)
         lin = self.linear(attn)
         lin = F.relu(lin)
-        #output = (1,batch,output_size)
+        # output = (1,batch,output_size)
         output = self.out(lin)
         decoder_output = self.softmax(output)
         return decoder_output, hidden_out  # ,attn
 
     def _initHidden(self, batch_size):
         return torch(4, batch_size, self.hidden_size).to(device)
+
+    def get_attn_weight(self):
+        return self.attention.attn_weight
 
 
 class Seq2Seq:
@@ -326,17 +332,39 @@ class Seq2Seq:
             decoder_hidden = encoder_hidden
 
             decoded_ids = [[] for _ in range(batch_size)]
+            # attn_weight->(translate_len,batch,input_len)
+            attn_weights = torch.zeros(
+                self.translate_length, batch_size, input_length)
             for di in range(self.translate_length):
                 decoder_output, decoder_hidden = self.decoder(
                     decoder_input, batch_size, decoder_hidden, encoder_outputs)
                 # dec_out = (1,batch,out_size)
+                _attn = self.decoder.get_attn_weight()
+                attn_weights[di] = _attn.transpose(0, 1)
                 dec_out = decoder_output[0].argmax(dim=1)
                 for i in range(batch_size):
                     decoded_ids[i].append(dec_out[i].item())
                 decoder_input = dec_out
-        return decoded_ids
+
+        return decoded_ids, attn_weights.transpose(0, 1)
 
     def translateIter(self, src):
         input_tensor = torch.tensor(
             src, dtype=torch.long).view(len(src), -1).to(device)
-        return self._translate(input_tensor)
+        ret, _ = self._translate(input_tensor)
+
+        return ret
+
+    def eval_attn(self, src, trg, src_s, trg_s):
+        """
+        src,trg->(batch,len)
+        batch==1
+        """
+        input_tensor = torch.tensor(
+            src, dtype=torch.long).view(len(src), -1).to(device)
+        ret, attn = self._translate(input_tensor)
+
+        # attn->(batcch,trg,src)
+        show_attention(src_s, trg_s, attn.squeeze())
+        print("press enter to show next")
+        input()
