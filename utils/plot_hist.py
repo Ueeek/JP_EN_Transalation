@@ -27,19 +27,12 @@ def show_attention(src_sen, trg_sen, attn_mat):
     trg  :len_trg
     attn_mat = (len_trg,len_src)
     """
-    print("src>", src_sen)
-    print("trg->", trg_sen)
-    print("attn_mat->", attn_mat.size())
-    print("mat->", attn_mat)
-
     fig, ax = plt.subplots()
     ax.pcolor(attn_mat, cmap=plt.cm.Greys_r, vmin=0.0, vmax=1.0)
 
     attn = np.array(attn_mat)
-    attn_mat = attn[:, :-1]
+    attn_mat = attn
 
-    src_sen = [v for v in src_sen if v != "MASK"]
-    trg_sen = [v for v in trg_sen if v != "MASK"]
     ax.patch.set_facecolor('black')
     ax.set_yticks(np.arange(attn_mat.shape[0])+0.5, minor=False)
     ax.set_xticks(np.arange(attn_mat.shape[1])+0.5, minor=False)

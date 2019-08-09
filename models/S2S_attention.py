@@ -90,6 +90,8 @@ class Attention(nn.Module):
 
         # repeat(1,batch,hidden*2)->(input_len,batch_size,hidden*2)
         rep_gru_out = decoder_gru_output.repeat(input_len, 1, 1)
+
+        # product(input_len,batch_size,hidden*2)
         # product(input_len,batch_size,hidden*2)
         weight_product = rep_gru_out * encoder_outputs
 
@@ -101,8 +103,6 @@ class Attention(nn.Module):
             input_len, batch_size, 1)
 
         self.attn_weight = weight_softmax.view(input_len, batch_size)
-
-        # output = (1,batch,output_size)
         # repeat(input_len,batch_size,hidden*2)
         rep_soft = weight_softmax.repeat(1, 1, self.hidden_size*2)
         # product
@@ -111,6 +111,9 @@ class Attention(nn.Module):
         # attn_sum (batch,hidden*2)
         attn_sum = attn_mul.sum(dim=0)
         return attn_sum.view(1, batch_size, self.hidden_size*2).to(device)
+
+    def _get_attn_weight(self):
+        return self.attn_weight
 
 
 class AttnDecoderRnn(nn.Module):
@@ -178,7 +181,8 @@ class AttnDecoderRnn(nn.Module):
         return torch(4, batch_size, self.hidden_size).to(device)
 
     def get_attn_weight(self):
-        return self.attention.attn_weight
+        ret = self.attention._get_attn_weight()
+        return ret
 
 
 class Seq2Seq:
@@ -241,7 +245,6 @@ class Seq2Seq:
                 decoder_input, batch_size, decoder_hidden, encoder_outputs)
 
             tmp_loss = self.criterion(decoder_output[0], target_tensor[di])
-            # print("tmp_loss->", tmp_loss)
             decoder_input = target_tensor[di]  # teacher forcing
             loss += tmp_loss
         return loss
@@ -311,6 +314,7 @@ class Seq2Seq:
         ------------
             input_temnsor: (batch,length)
         """
+        print("input_->", input_tensor.size())
         with torch.no_grad():
             batch_size = input_tensor.size()[0]
             input_length = input_tensor.size()[1]
@@ -355,16 +359,16 @@ class Seq2Seq:
 
         return ret
 
-    def eval_attn(self, src, trg, src_s, trg_s):
+    def eval_attn(self, src, src_s, trg_i2w):
         """
         src,trg->(batch,len)
         batch==1
         """
         input_tensor = torch.tensor(
             src, dtype=torch.long).view(len(src), -1).to(device)
+        ret, _ = self._translate(input_tensor)
         ret, attn = self._translate(input_tensor)
 
-        # attn->(batcch,trg,src)
-        show_attention(src_s, trg_s, attn.squeeze())
-        print("press enter to show next")
-        input()
+        for s, t, at in zip(src_s, ret, attn):
+            t = trg_i2w(t)
+            show_attention(s, t, at)
