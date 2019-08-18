@@ -37,6 +37,7 @@ class Embedder(nn.Module):
             self.embedding = nn.Embedding.from_pretrained(emb, freeze=False)
 
     def forward(self, x):
+        print("x->", x.size())
         return self.embedding(x)
 
 
@@ -223,7 +224,7 @@ class Decoder(nn.Module):
         self.N = N
         self.embed = Embedder(config, enc=False).to(device)
         self.pe = PositionalEndoder(config).to(device)
-        #self.layers = get_clones(DecoderLayer(config, heads), N)
+        # self.layers = get_clones(DecoderLayer(config, heads), N)
         self.layers = nn.ModuleList(
             [DecoderLayer(config, heads) for _ in range(N)])
         self.norm = Norm(config).to(device)
@@ -292,7 +293,7 @@ class Model():
         out = output.view(-1, output.size(-1)).to(device)
         targ = target_tensor.view(-1).to(device)
 
-        #loss = self.criterion(output, target_tensor)
+        # loss = self.criterion(output, target_tensor)
         loss = self.criterion(out, targ)
         return loss
 
@@ -353,3 +354,17 @@ class Model():
             train_losses.append(epoch_loss/batch_cnt)
             val_losses.append(val_loss/val_bacth)
         show_loss_plot(train_losses, val_losses)
+
+    def translate(self, src):
+        input_tensor = torch.tensor(
+            src, dtype=torch.long).view(1, -1).to(device)
+        with torch.no_grad():
+            e_outputs = self.model.encoder(input_tensor)
+            outputs = torch.zeros(self.MAX_LENGTH).to(device)  # FIXME errorでる
+            #outputs[0] = torch.LongTensor([self.SOS_token])
+            print("outputs->", outputs[:2].view(1, -1).size())
+
+            for i in range(1, self.MAX_LENGTH+1):
+                out = self.model.decoder(
+                    outputs[:i].view(1, -1).to(device), e_outputs)
+                print("out->", out.size())
