@@ -37,7 +37,6 @@ class Embedder(nn.Module):
             self.embedding = nn.Embedding.from_pretrained(emb, freeze=False)
 
     def forward(self, x):
-        print("x->", x.size())
         return self.embedding(x)
 
 
@@ -76,7 +75,7 @@ class PositionalEndoder(nn.Module):
         """
 
         x = x*math.sqrt(self.hidden_size)  # original imple of ref
-        x = x+self.pos_enc.repeat(x.size(0), 1, 1)  # FIXME もっと良い実装があるはず
+        x = x+self.pos_enc[:, :x.size(1)]  # broadcasting
         return x
 
 
@@ -104,9 +103,9 @@ class MultiHeadAttention(nn.Module):
     def forward(self, q, k, v):
         bs = q.size(0)
 
-        k = self.k_linear(k).view(bs, -1, self.h, self.hidden_size).to(device)
-        q = self.k_linear(q).view(bs, -1, self.h, self.hidden_size).to(device)
-        v = self.k_linear(v).view(bs, -1, self.h, self.hidden_size).to(device)
+        k = self.k_linear(k).view(bs, -1, self.h, self.d_k).to(device)
+        q = self.k_linear(q).view(bs, -1, self.h, self.d_k).to(device)
+        v = self.k_linear(v).view(bs, -1, self.h, self.d_k).to(device)
 
         k = k.transpose(1, 2)
         q = q.transpose(1, 2)
@@ -357,14 +356,21 @@ class Model():
 
     def translate(self, src):
         input_tensor = torch.tensor(
-            src, dtype=torch.long).view(1, -1).to(device)
+            src, dtype=torch.long, device=device).view(1, -1).to(device)
         with torch.no_grad():
             e_outputs = self.model.encoder(input_tensor)
             outputs = torch.zeros(self.MAX_LENGTH).to(device)  # FIXME errorでる
-            #outputs[0] = torch.LongTensor([self.SOS_token])
-            print("outputs->", outputs[:2].view(1, -1).size())
+            outputs[0] = torch.LongTensor([self.SOS_token])
 
-            for i in range(1, self.MAX_LENGTH+1):
-                out = self.model.decoder(
-                    outputs[:i].view(1, -1).to(device), e_outputs)
-                print("out->", out.size())
+            for i in range(1, self.MAX_LENGTH):
+                dec_inp = torch.tensor(
+                    outputs[:i], dtype=torch.long).view(1, -1).to(device)
+                out = self.model.decoder(dec_inp, e_outputs)  # (1,len,emb_dim)
+                out = self.model.out(out)  # (1,len,out_voc)
+                out = F.softmax(out, dim=2)
+                val, ix = out[0][-1].data.topk(1)
+                print("ix->", ix)
+                outputs[i] = int(ix[0])
+                if ix[0] == self.EOS_token:
+                    break
+        return list(map(int, outputs[:i]))
