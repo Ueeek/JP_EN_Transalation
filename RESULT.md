@@ -30,6 +30,15 @@
 ### model
 * S2S_emn + attention layer
 
-## performance
+### performance
 * 20 epoch は少なそう
 * 劇的に良くなって感はない(学習が足りてないかも)
+
+## Transfomer
+### model
+* transfomerを実装
+* ref(https://towardsdatascience.com/how-to-code-the-transformer-in-pytorch-24db27c8f9ec)
+
+### performance
+* 学習が早い
+* ぽい翻訳はできているけど、いい感じかと言われるといまいち
