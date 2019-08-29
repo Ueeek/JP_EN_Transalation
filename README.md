@@ -7,6 +7,9 @@
     * corpus
 * models
     * enc_dec models
+    ** enc_dec
+    ** attention enc_dec
+    *** transformer
 * notebooks
     * training code of models
 * utils
