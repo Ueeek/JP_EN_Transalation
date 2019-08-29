@@ -163,7 +163,7 @@ class EncoderLayer(nn.Module):
 
     def forward(self, x):
         x2 = self.norm_1(x)
-        x = x + self.dropout_1(self.attn(x2, x2, x2))  # self attention
+        x = x + self.dropout_1(self.attn(x2, x2, x2))
         x2 = self.norm_2(x)
         x = x + self.dropout_2(self.ff(x2))
         return x
@@ -187,7 +187,7 @@ class DecoderLayer(nn.Module):
 
     def forward(self, x, e_outputs):
         x2 = self.norm_1(x)
-        x = x + self.dropout_1(self.attn_1(x2, x2, x2))  # self attention
+        x = x + self.dropout_1(self.attn_1(x2, x2, x2))
         x2 = self.norm_2(x)
         x = x + self.dropout_2(self.attn_2(x2, e_outputs, e_outputs))
         x2 = self.norm_3(x)
@@ -270,31 +270,30 @@ class Model():
         dec_emb = torch.FloatTensor(dec_emb).to(
             device) if not dec_emb is None else None
 
-        self.model = Transformer(config).to(device)
+        self.model = Transformer(config, 1, 10).to(device)
         self.criterion = nn.NLLLoss(ignore_index=self.mask_token).to(device)
         self.optimizer = optim.Adam(
             self.model.parameters(), lr=self.learning_rate)
         self.batch_size = config["batch_size"]
         self.epochs = config["epochs"]
 
-    def _calc_loss(self, input_tensor, target_tensor):
+    def _calc_loss(self, input_tensor, shifted_trg_tensor, target_tensor):
         # input_tensor=(batch_size,length)
         self.optimizer.zero_grad()
 
         # input_tensor=(length,batch)
         # target_tensor=(length,batch)
-        # taeget_tensorはshiftedの状態で入ってくる。
-        dec_inp = target_tensor[:, :-1]
-        targ = target_tensor[:, 1:].contiguous().view(-1).to(device)
-        output = self.model(input_tensor, dec_inp)
+        shifted = target_tensor
+        output = self.model(input_tensor, shifted_trg_tensor)
         out = output.view(-1, output.size(-1)).to(device)
+        targ = target_tensor.view(-1).to(device)
 
         # loss = self.criterion(output, target_tensor)
         loss = self.criterion(out, targ)
         return loss
 
-    def train(self, input_tensor, target_tensor):
-        loss = self._calc_loss(input_tensor, target_tensor)
+    def train(self, input_tensor, shifted_trg_tensor, target_tensor):
+        loss = self._calc_loss(input_tensor, shifted_trg_tensor, target_tensor)
         # back propagate
         if torch.isnan(loss):
             print("nan loss->", loss)
@@ -304,7 +303,7 @@ class Model():
         # loss_sum/batch_size
         return loss.item() / input_tensor.size()[0]
 
-    def validation(self, input_tensor, target_tensor):
+    def validation(self, input_tensor,shifted_trg_tensor,target_tensor):
         with torch.no_grad():
             loss = self._calc_loss(input_tensor, target_tensor)
         return loss.item() / input_tensor.size()[0]
@@ -366,6 +365,7 @@ class Model():
                 out = self.model.out(out)  # (1,len,out_voc)
                 out = F.softmax(out, dim=2)
                 val, ix = out[0][-1].data.topk(1)
+                print("ix->", ix)
                 outputs[i] = int(ix[0])
                 if ix[0] == self.EOS_token:
                     break
