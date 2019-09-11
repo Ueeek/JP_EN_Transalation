@@ -3,6 +3,7 @@ import time
 import copy
 import math
 import torch.nn as nn
+import numpy as np
 import torch.nn.functional as F
 from torch import optim
 from utils.plot_hist import show_loss_plot
@@ -80,11 +81,14 @@ class PositionalEndoder(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, config, dropout=0.1):
+    def __init__(self, config, dropout=0.1, mask=None):
         super(MultiHeadAttention, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.emb_dim = config["emb_dim"]
         self.heads = config["n_heads"]
+        self.mask = mask
+        self.max_len = config["MAX_LENGTH"]
+
         self.d_k = self.hidden_size//self.heads
         self.h = self.heads
 
@@ -94,9 +98,13 @@ class MultiHeadAttention(nn.Module):
 
         self.drop_out = nn.Dropout(p=dropout)
         self.out = nn.Linear(self.hidden_size, self.emb_dim)
+        self.peak_mask = torch.from_numpy(
+            np.triu(np.ones((1, self.max_len, self.max_len)), k=1).astype('uint8')).to(device)
 
-    def _attention(self, q, k, v, hidden_size):
+    def _attention(self, q, k, v, hidden_size, mask=None):
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(hidden_size)
+        if self.mask is not None:
+            scores = scores.masked_fill(self.peak_mask == 0, -1e9)
         scores = F.softmax(scores, dim=-1)
         output = torch.matmul(scores, v)
         return output
@@ -112,7 +120,7 @@ class MultiHeadAttention(nn.Module):
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        scores = self._attention(q, k, v, self.hidden_size)
+        scores = self._attention(q, k, v, self.hidden_size, self.mask)
         concat = scores.transpose(1, 2).contiguous().view(
             bs, -1, self.hidden_size)
         output = self.out(concat)
@@ -181,7 +189,7 @@ class DecoderLayer(nn.Module):
         self.dropout_2 = nn.Dropout()
         self.dropout_3 = nn.Dropout()
 
-        self.attn_1 = MultiHeadAttention(config).to(device)
+        self.attn_1 = MultiHeadAttention(config, mask=True).to(device)
         self.attn_2 = MultiHeadAttention(config).to(device)
         self.ff = FeedForward(config)
 
