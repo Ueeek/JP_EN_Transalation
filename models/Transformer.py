@@ -81,7 +81,7 @@ class PositionalEndoder(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, config, dropout=0.1, mask=None):
+    def __init__(self, config, mask=None):
         super(MultiHeadAttention, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.emb_dim = config["emb_dim"]
@@ -96,15 +96,15 @@ class MultiHeadAttention(nn.Module):
         self.k_linear = nn.Linear(self.emb_dim, self.hidden_size)
         self.v_linear = nn.Linear(self.emb_dim, self.hidden_size)
 
-        self.drop_out = nn.Dropout(p=dropout)
         self.out = nn.Linear(self.hidden_size, self.emb_dim)
-        self.peak_mask = torch.from_numpy(
-            np.triu(np.ones((1, self.max_len, self.max_len)), k=1).astype('uint8')).to(device)
 
     def _attention(self, q, k, v, hidden_size, mask=None):
+        size = q.size(2)
+        peak_mask = torch.from_numpy(np.triu(
+            np.ones((1, size, size)), k=1).astype('uint8')).to(device)
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(hidden_size)
         if self.mask is not None:
-            scores = scores.masked_fill(self.peak_mask == 0, -1e9)
+            scores = scores.masked_fill(peak_mask == 0, -1e9)
         scores = F.softmax(scores, dim=-1)
         output = torch.matmul(scores, v)
         return output
@@ -136,10 +136,11 @@ class FeedForward(nn.Module):
         self.dropout = nn.Dropout()
         self.linear_2 = nn.Linear(self.hidden_size, self.emb_dim)
 
-    def forward(self, x):
+    def forward(self, x, is_train=True):
         x = self.linear_1(x)
         x = F.relu(x)
-        x = self.dropout(x)
+        if is_train:
+            x = self.dropout(x)
         x = self.linear_2(x)
         return x
 
@@ -169,11 +170,17 @@ class EncoderLayer(nn.Module):
         self.dropout_1 = nn.Dropout()
         self.dropout_2 = nn.Dropout()
 
-    def forward(self, x):
+    def forward(self, x, is_train=True):
         x2 = self.norm_1(x)
-        x = x + self.dropout_1(self.attn(x2, x2, x2))  # self attention
+        x_attn = self.attn(x2, x2, x2)
+        if is_train:
+            x_attn = self.dropout_1(x_attn)
+        x = x + x_attn
         x2 = self.norm_2(x)
-        x = x + self.dropout_2(self.ff(x2))
+        x2 = self.ff(x2)
+        if is_train:
+            x2 = self.dropout_2(x2)
+        x = x + x2
         return x
 
 
@@ -193,18 +200,24 @@ class DecoderLayer(nn.Module):
         self.attn_2 = MultiHeadAttention(config).to(device)
         self.ff = FeedForward(config)
 
-    def forward(self, x, e_outputs):
+    def forward(self, x, e_outputs, is_train=True):
         x2 = self.norm_1(x)
-        x = x + self.dropout_1(self.attn_1(x2, x2, x2))  # self attention
+
+        x_attn = self.attn_1(x2, x2, x2)
+        if is_train:
+            x_attn = self.dropout_1(x_attn)
+        x = x + x_attn
         x2 = self.norm_2(x)
-        x = x + self.dropout_2(self.attn_2(x2, e_outputs, e_outputs))
+        x_attn2 = self.attn_2(x2, e_outputs, e_outputs)
+        if is_train:
+            x_attn2 = self.dropout_2(x_attn2)
+        x = x + x_attn2
         x2 = self.norm_3(x)
-        x = x + self.dropout_3(self.ff(x2))
+        ff = self.ff(x2)
+        if is_train:
+            ff = self.dropout_3(ff)
+        x = x + ff
         return x
-
-
-def get_clones(module, N):
-    return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
 class Encoder(nn.Module):
@@ -218,11 +231,11 @@ class Encoder(nn.Module):
             [EncoderLayer(config) for _ in range(self.N)])
         self.norm = Norm(config).to(device)
 
-    def forward(self, src):
+    def forward(self, src, is_train=True):
         x = self.embed(src)
         x = self.pe(x)
         for i in range(self.N):
-            x = self.layers[i](x)
+            x = self.layers[i](x, is_train)
         return self.norm(x)
 
 
@@ -236,11 +249,11 @@ class Decoder(nn.Module):
             [DecoderLayer(config) for _ in range(self.N)])
         self.norm = Norm(config).to(device)
 
-    def forward(self, trg, e_outputs):
+    def forward(self, trg, e_outputs, is_train=True):
         x = self.embed(trg)
         x = self.pe(x)
         for i in range(self.N):
-            x = self.layers[i](x, e_outputs)
+            x = self.layers[i](x, e_outputs, is_train)
         return self.norm(x)
 
 
@@ -254,9 +267,9 @@ class Transformer(nn.Module):
         self.out = nn.Linear(self.hidden_size, self.output_size)
         self.softmax = nn.LogSoftmax(dim=2)
 
-    def forward(self, src, trg):
-        e_outputs = self.encoder(src)
-        d_output = self.decoder(trg, e_outputs)
+    def forward(self, src, trg, is_train=True):
+        e_outputs = self.encoder(src, is_train)
+        d_output = self.decoder(trg, e_outputs, is_train)
         output = self.out(d_output)
         output = self.softmax(output)
         return output
@@ -363,14 +376,15 @@ class Model():
         input_tensor = torch.tensor(
             src, dtype=torch.long, device=device).view(1, -1).to(device)
         with torch.no_grad():
-            e_outputs = self.model.encoder(input_tensor)
+            e_outputs = self.model.encoder(input_tensor, is_train=False)
             outputs = torch.zeros(self.MAX_LENGTH).to(device)  # FIXME errorでる
             outputs[0] = torch.LongTensor([self.SOS_token])
 
             for i in range(1, self.MAX_LENGTH):
                 dec_inp = torch.tensor(
                     outputs[:i], dtype=torch.long).view(1, -1).to(device)
-                out = self.model.decoder(dec_inp, e_outputs)  # (1,len,emb_dim)
+                out = self.model.decoder(
+                    dec_inp, e_outputs, is_train=False)  # (1,len,emb_dim)
                 out = self.model.out(out)  # (1,len,out_voc)
                 out = F.softmax(out, dim=2)
                 val, ix = out[0][-1].data.topk(1)
