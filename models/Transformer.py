@@ -134,7 +134,7 @@ class FeedForward(nn.Module):
         self.emb_dim = config["emb_dim"]
         self.hidden_size = config["n_hidden"]
         self.linear_1 = nn.Linear(self.emb_dim, self.hidden_size)
-        self.dropout = nn.Dropout()
+        self.dropout = nn.Dropout(p=0)
         self.linear_2 = nn.Linear(self.hidden_size, self.emb_dim)
 
     def forward(self, x, is_train=True):
@@ -168,8 +168,8 @@ class EncoderLayer(nn.Module):
         self.norm_2 = Norm(config).to(device)
         self.attn = MultiHeadAttention(config).to(device)
         self.ff = FeedForward(config).to(device)
-        self.dropout_1 = nn.Dropout()
-        self.dropout_2 = nn.Dropout()
+        self.dropout_1 = nn.Dropout(p=0.6)
+        self.dropout_2 = nn.Dropout(p=0.7)
 
     def forward(self, x, is_train=True):
         x2 = self.norm_1(x)
@@ -193,9 +193,9 @@ class DecoderLayer(nn.Module):
         self.norm_2 = Norm(config).to(device)
         self.norm_3 = Norm(config).to(device)
 
-        self.dropout_1 = nn.Dropout()
-        self.dropout_2 = nn.Dropout()
-        self.dropout_3 = nn.Dropout()
+        self.dropout_1 = nn.Dropout(p=0.6)
+        self.dropout_2 = nn.Dropout(p=0.7)
+        self.dropout_3 = nn.Dropout(p=0.8)
 
         self.attn_1 = MultiHeadAttention(config, mask=True).to(device)
         self.attn_2 = MultiHeadAttention(config).to(device)
