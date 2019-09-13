@@ -1,6 +1,7 @@
 import torch
-import time
 import copy
+import time
+import heapq
 import math
 import torch.nn as nn
 import numpy as np
@@ -133,7 +134,7 @@ class FeedForward(nn.Module):
         self.emb_dim = config["emb_dim"]
         self.hidden_size = config["n_hidden"]
         self.linear_1 = nn.Linear(self.emb_dim, self.hidden_size)
-        self.dropout = nn.Dropout()
+        self.dropout = nn.Dropout(p=0)
         self.linear_2 = nn.Linear(self.hidden_size, self.emb_dim)
 
     def forward(self, x, is_train=True):
@@ -167,8 +168,8 @@ class EncoderLayer(nn.Module):
         self.norm_2 = Norm(config).to(device)
         self.attn = MultiHeadAttention(config).to(device)
         self.ff = FeedForward(config).to(device)
-        self.dropout_1 = nn.Dropout()
-        self.dropout_2 = nn.Dropout()
+        self.dropout_1 = nn.Dropout(p=0.6)
+        self.dropout_2 = nn.Dropout(p=0.7)
 
     def forward(self, x, is_train=True):
         x2 = self.norm_1(x)
@@ -192,9 +193,9 @@ class DecoderLayer(nn.Module):
         self.norm_2 = Norm(config).to(device)
         self.norm_3 = Norm(config).to(device)
 
-        self.dropout_1 = nn.Dropout()
-        self.dropout_2 = nn.Dropout()
-        self.dropout_3 = nn.Dropout()
+        self.dropout_1 = nn.Dropout(p=0.6)
+        self.dropout_2 = nn.Dropout(p=0.7)
+        self.dropout_3 = nn.Dropout(p=0.8)
 
         self.attn_1 = MultiHeadAttention(config, mask=True).to(device)
         self.attn_2 = MultiHeadAttention(config).to(device)
@@ -285,6 +286,7 @@ class Model():
         self.translate_length = config["translate_length"]
         self.val_size = config["val_size"]
         self.mask_token = config["mask_token"]
+        self.param_dir = config["param_dir"]
 
         enc_emb = torch.FloatTensor(enc_emb).to(
             device) if not enc_emb is None else None
@@ -330,7 +332,7 @@ class Model():
             loss = self._calc_loss(input_tensor, target_tensor)
         return loss.item() / input_tensor.size()[0]
 
-    def trainIters(self, src, trg, val_src, val_trg):
+    def trainIters(self, src, trg, val_src, val_trg, save=False, load=False):
         data_train = [(torch.LongTensor(s), torch.LongTensor(t))
                       for s, t in zip(src, trg)]
         data_val = [(torch.LongTensor(s), torch.LongTensor(t))
@@ -342,6 +344,9 @@ class Model():
             data_val, batch_size=self.batch_size, shuffle=True)
         print("train_size:{} - val_size:{}".format(len(data_train), len(data_val)))
 
+        if load:
+            self.load_model()
+            print("pre_trained model is loaded")
         # batchを作る
         train_losses = []
         val_losses = []
@@ -371,13 +376,16 @@ class Model():
             train_losses.append(epoch_loss/batch_cnt)
             val_losses.append(val_loss/val_bacth)
         show_loss_plot(train_losses, val_losses)
+        if save:
+            self.save_model()
+            print("saved_model")
 
     def translate(self, src):
         input_tensor = torch.tensor(
             src, dtype=torch.long, device=device).view(1, -1).to(device)
         with torch.no_grad():
             e_outputs = self.model.encoder(input_tensor, is_train=False)
-            outputs = torch.zeros(self.MAX_LENGTH).to(device)  # FIXME errorでる
+            outputs = torch.zeros(self.MAX_LENGTH).to(device)
             outputs[0] = torch.LongTensor([self.SOS_token])
 
             for i in range(1, self.MAX_LENGTH):
@@ -392,3 +400,47 @@ class Model():
                 if ix[0] == self.EOS_token:
                     break
         return list(map(int, outputs[:i]))
+
+    def translate_beam(self, src, beam_size=2):
+        """
+        beam seach
+        return beam_size candidate
+        """
+
+        input_tensor = torch.tensor(
+            src, dtype=torch.long, device=device).view(1, -1).to(device)
+        with torch.no_grad():
+            e_outputs = self.model.encoder(input_tensor, is_train=False)
+            beam_outputs = [
+                [-1, torch.zeros(self.MAX_LENGTH).to(device)]]
+            beam_outputs[0][1][0] = torch.LongTensor([self.SOS_token])
+            for i in range(1, self.MAX_LENGTH):
+                beam_cand = []
+                for score, cand in beam_outputs:
+                    dec_inp = torch.tensor(
+                        cand[:i], dtype=torch.long).view(1, -1).to(device)
+                    out = self.model.decoder(
+                        dec_inp, e_outputs, is_train=False)
+                    out = self.model.out(out)
+                    out = F.softmax(out, dim=2)  # (1,1,out_voc)であってる?
+                    res = out[0][-1].data.topk(beam_size)
+                    for b in range(beam_size):
+                        next_cand = copy.deepcopy(cand)
+                        next_cand[i] = int(res[1][b])
+                        heapq.heappush(
+                            beam_cand, [score*float(res[0][b]), next_cand])
+
+                beam_outputs = []
+                for _ in range(beam_size):
+                    beam_outputs.append(heapq.heappop(beam_cand))
+
+            ret = []
+            for _, b in beam_outputs:
+                ret.append(list(map(int, b)))
+            return ret
+
+    def save_model(self):
+        torch.save(self.model.state_dict(), self.param_dir)
+
+    def load_model(self):
+        self.model.load_state_dict(torch.load(self.param_dir))
