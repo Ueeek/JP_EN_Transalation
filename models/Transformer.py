@@ -331,7 +331,7 @@ class Model():
             loss = self._calc_loss(input_tensor, target_tensor)
         return loss.item() / input_tensor.size()[0]
 
-    def trainIters(self, src, trg, val_src, val_trg):
+    def trainIters(self, src, trg, val_src, val_trg, save=False, load=False):
         data_train = [(torch.LongTensor(s), torch.LongTensor(t))
                       for s, t in zip(src, trg)]
         data_val = [(torch.LongTensor(s), torch.LongTensor(t))
@@ -343,6 +343,9 @@ class Model():
             data_val, batch_size=self.batch_size, shuffle=True)
         print("train_size:{} - val_size:{}".format(len(data_train), len(data_val)))
 
+        if load:
+            self.load_model()
+            print("pre_trained model is loaded")
         # batchを作る
         train_losses = []
         val_losses = []
@@ -372,6 +375,9 @@ class Model():
             train_losses.append(epoch_loss/batch_cnt)
             val_losses.append(val_loss/val_bacth)
         show_loss_plot(train_losses, val_losses)
+        if save:
+            self.save_model()
+            print("saved_model")
 
     def translate(self, src):
         input_tensor = torch.tensor(
