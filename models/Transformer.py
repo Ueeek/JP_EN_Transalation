@@ -285,6 +285,7 @@ class Model():
         self.translate_length = config["translate_length"]
         self.val_size = config["val_size"]
         self.mask_token = config["mask_token"]
+        self.param_dir = config["param_dir"]
 
         enc_emb = torch.FloatTensor(enc_emb).to(
             device) if not enc_emb is None else None
@@ -430,8 +431,8 @@ class Model():
                 ret.append(list(map(int, b)))
             return ret
 
-    def save_model():
-        assert NotImplementedError
+    def save_model(self):
+        torch.save(self.model.state_dict(), self.param_dir)
 
-    def load_model():
-        assert NotImplementedError
+    def load_model(self):
+        self.model.load_state_dict(torch.load(self.param_dir))
