@@ -1,4 +1,5 @@
 import torch
+import copy
 import time
 import heapq
 import math
@@ -424,9 +425,10 @@ class Model():
                     out = F.softmax(out, dim=2)  # (1,1,out_voc)であってる?
                     res = out[0][-1].data.topk(beam_size)
                     for b in range(beam_size):
-                        cand[i] = int(res[1][b])
+                        next_cand = copy.deepcopy(cand)
+                        next_cand[i] = int(res[1][b])
                         heapq.heappush(
-                            beam_cand, [score*float(res[0][b]), cand])
+                            beam_cand, [score*float(res[0][b]), next_cand])
 
                 beam_outputs = []
                 for _ in range(beam_size):
