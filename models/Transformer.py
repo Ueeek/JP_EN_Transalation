@@ -101,8 +101,8 @@ class MultiHeadAttention(nn.Module):
 
     def _attention(self, q, k, v, hidden_size, mask=None):
         size = q.size(2)
-        peak_mask = torch.from_numpy(np.triu(
-            np.ones((1, size, size)), k=1).astype('uint8')).to(device)
+        peak_mask = torch.from_numpy(
+            np.triu(np.ones((1, size, size)), k=1).astype('uint8')).to(device)
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(hidden_size)
         if self.mask is not None:
             scores = scores.masked_fill(peak_mask == 0, -1e9)

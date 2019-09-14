@@ -13,7 +13,7 @@ class LangJa:
                            "UNK": self.UNK_token,
                            "MASK": self.mask_token
                            }
-        self.word2count = {}
+        #self.word2count = {}
         self.index2word = {self.SOS_token: "SOS",
                            self.EOS_token: "EOS",
                            self.UNK_token: "UNK",
@@ -31,11 +31,12 @@ class LangJa:
             if self.n_words >= self.max_features:
                 return
             self.word2index[word] = self.n_words
-            self.word2count[word] = 1
+            #self.word2count[word] = 1
             self.index2word[self.n_words] = word
             self.n_words += 1
         else:
-            self.word2count[word] += 1
+            #self.word2count[word] += 1
+            pass
 
     def word2id(self, sentence, target=False):
         ret = []

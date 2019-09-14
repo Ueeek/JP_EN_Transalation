@@ -3,7 +3,7 @@ import pandas as pd
 import unicodedata
 import string
 import re
-#import random
+# import random
 
 
 def _unicodeToAscii(s):
@@ -33,14 +33,20 @@ def _length_filter(data, config):
     return data[data.apply(lambda x:len(x[config["en_col"]].split(" ")), axis=1) < config["MAX_LENGTH"]]
 
 
-def loadLangs(config):
+def loadLangs(config, shuffle=False, need_clean=False):
     en_col = config["en_col"]
     jp_col = config["jp_col"]
     print("reading lines")
     data = pd.read_csv(config["corpus_file"], sep="\t", names=[en_col, jp_col])
-    data = data.sample(frac=1, random_state=0).reset_index(drop=True)
-    data[en_col] = data[en_col].apply(lambda x: "".join(_norm_en(x)))
-    data[jp_col] = data[jp_col].apply(lambda x: "".join(_norm_jp(x)))
+    if shuffle:
+        print("shuffling")
+        data = data.sample(frac=1, random_state=0).reset_index(drop=True)
+    print("pre processing")
+    if need_clean:
+        print("cleaning")
+        data[en_col] = data[en_col].apply(lambda x: "".join(_norm_en(x)))
+        data[jp_col] = data[jp_col].apply(lambda x: "".join(_norm_jp(x)))
     data = data[[en_col, jp_col]]
+    print("filter length")
     filtered = _length_filter(data, config)
     return filtered
