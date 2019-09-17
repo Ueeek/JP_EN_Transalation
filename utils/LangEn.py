@@ -1,4 +1,5 @@
 import mosestokenizer as mos
+from collections import Counter
 
 
 class LangEn:
@@ -19,28 +20,43 @@ class LangEn:
                            "UNK": self.UNK_token,
                            "MASK": self.mask_token
                            }
-        self.word2count = {}
         self.index2word = {self.SOS_token: "SOS",
                            self.EOS_token: "EOS",
                            self.UNK_token: "UNK",
                            self.mask_token: "MASK"}
+        self.word2count = Counter()
+        self.added = set()
         self.n_words = 4
         self.tokenizer = mos.MosesTokenizer("en")
 
-    def addSentence(self, sentence):
-        for word in self.tokenizer(sentence):
-            self.addWord(word)
+    def add_from_df(self, df):
+        """
+        add word from dataframe
+        call this
+        """
+        for sentence in df:
+            self._addSentence(sentence)
+        self._register_word()
 
-    def addWord(self, word):
-        if word not in self.word2index:
-            if self.n_words >= self.max_features:
-                return
-            self.word2index[word] = self.n_words
-            self.word2count[word] = 1
-            self.index2word[self.n_words] = word
-            self.n_words += 1
+    def _addSentence(self, sentence):
+        for word in self.tokenizer(sentence):
+            self._addWord(word)
+
+    def _addWord(self, word):
+        if word not in self.added:
+            self.added.add(word)
+            self.word2count.update([word])
         else:
             self.word2count[word] += 1
+
+    def _register_word(self):
+        for word, _ in self.word2count.most_common():
+            if self.n_words >= self.max_features:
+                break
+            self.word2index[word] = self.n_words
+            self.index2word[self.n_words] = word
+            self.n_words += 1
+        print("register word to dict")
 
     def word2id(self, sentence, target=False):
         ret = []
