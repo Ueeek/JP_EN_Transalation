@@ -28,7 +28,7 @@ class Embedder(nn.Module):
         self.hidden_size = config["n_hidden"]
         if enc:
             self.input_size = config["input_dim"]
-        else:
+        else:  # decoder
             self.input_size = config["output_dim"]
         self.mask_token = config["mask_token"]
 
@@ -82,12 +82,11 @@ class PositionalEndoder(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, config, mask=None):
+    def __init__(self, config):
         super(MultiHeadAttention, self).__init__()
         self.hidden_size = config["n_hidden"]
         self.emb_dim = config["emb_dim"]
         self.heads = config["n_heads"]
-        self.mask = mask
         self.max_len = config["MAX_LENGTH"]
 
         self.d_k = self.hidden_size//self.heads
@@ -104,13 +103,13 @@ class MultiHeadAttention(nn.Module):
         peak_mask = torch.from_numpy(
             np.triu(np.ones((1, size, size)), k=1).astype('uint8')).to(device)
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(hidden_size)
-        if self.mask is not None:
+        if mask is not None:
             scores = scores.masked_fill(peak_mask == 0, -1e9)
         scores = F.softmax(scores, dim=-1)
         output = torch.matmul(scores, v)
         return output
 
-    def forward(self, q, k, v):
+    def forward(self, q, k, v, mask=None):
         bs = q.size(0)
 
         k = self.k_linear(k).view(bs, -1, self.h, self.d_k).to(device)
@@ -121,7 +120,7 @@ class MultiHeadAttention(nn.Module):
         q = q.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        scores = self._attention(q, k, v, self.hidden_size, self.mask)
+        scores = self._attention(q, k, v, self.hidden_size, mask)
         concat = scores.transpose(1, 2).contiguous().view(
             bs, -1, self.hidden_size)
         output = self.out(concat)
@@ -137,7 +136,7 @@ class FeedForward(nn.Module):
         self.dropout = nn.Dropout()
         self.linear_2 = nn.Linear(self.hidden_size, self.emb_dim)
 
-    def forward(self, x, is_train=True):
+    def forward(self, x, is_train):
         x = self.linear_1(x)
         x = F.relu(x)
         if is_train:
@@ -171,14 +170,14 @@ class EncoderLayer(nn.Module):
         self.dropout_1 = nn.Dropout()
         self.dropout_2 = nn.Dropout()
 
-    def forward(self, x, is_train=True):
+    def forward(self, x, is_train):
         x2 = self.norm_1(x)
         x_attn = self.attn(x2, x2, x2)
         if is_train:
             x_attn = self.dropout_1(x_attn)
         x = x + x_attn
         x2 = self.norm_2(x)
-        x2 = self.ff(x2)
+        x2 = self.ff(x2, is_train)
         if is_train:
             x2 = self.dropout_2(x2)
         x = x + x2
@@ -197,14 +196,14 @@ class DecoderLayer(nn.Module):
         self.dropout_2 = nn.Dropout()
         self.dropout_3 = nn.Dropout()
 
-        self.attn_1 = MultiHeadAttention(config, mask=True).to(device)
+        self.attn_1 = MultiHeadAttention(config).to(device)
         self.attn_2 = MultiHeadAttention(config).to(device)
         self.ff = FeedForward(config)
 
-    def forward(self, x, e_outputs, is_train=True):
+    def forward(self, x, e_outputs, is_train):
         x2 = self.norm_1(x)
 
-        x_attn = self.attn_1(x2, x2, x2)
+        x_attn = self.attn_1(x2, x2, x2, mask=True)
         if is_train:
             x_attn = self.dropout_1(x_attn)
         x = x + x_attn
@@ -214,7 +213,7 @@ class DecoderLayer(nn.Module):
             x_attn2 = self.dropout_2(x_attn2)
         x = x + x_attn2
         x2 = self.norm_3(x)
-        ff = self.ff(x2)
+        ff = self.ff(x2, is_train)
         if is_train:
             ff = self.dropout_3(ff)
         x = x + ff
@@ -232,7 +231,7 @@ class Encoder(nn.Module):
             [EncoderLayer(config) for _ in range(self.N)])
         self.norm = Norm(config).to(device)
 
-    def forward(self, src, is_train=True):
+    def forward(self, src, is_train):
         x = self.embed(src)
         x = self.pe(x)
         for i in range(self.N):
@@ -250,7 +249,7 @@ class Decoder(nn.Module):
             [DecoderLayer(config) for _ in range(self.N)])
         self.norm = Norm(config).to(device)
 
-    def forward(self, trg, e_outputs, is_train=True):
+    def forward(self, trg, e_outputs, is_train):
         x = self.embed(trg)
         x = self.pe(x)
         for i in range(self.N):
